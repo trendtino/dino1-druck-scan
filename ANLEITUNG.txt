@@ -346,8 +346,10 @@ der PROGRAMMCODE geaendert hat, und uebernimmt ihn dann automatisch:
   - eine Datei mit Syntaxfehlern wird abgelehnt, der PC arbeitet weiter
   - die vorherige Version liegt als C:\PaperPortErsatz\Watcher_vorher.ps1
   - der Watcher startet sich danach selbst neu
+Vor dem Hochladen in Watcher.ps1 (Abschnitt "VERSION") die Nummer
+$script:WatcherVersion hochzaehlen und $script:WatcherVersionDatum anpassen.
 Sofort pruefen: Rechtsklick aufs Tray-Symbol -> "Nach Updates suchen".
-Welcher Stand laeuft, zeigt "Ueber PaperPort-Ersatz" (Programmstand) und
+Welche Version laeuft, zeigt "Ueber PaperPort-Ersatz" (Version + Datum) und
 die Log-Datei.
 
 WICHTIG:

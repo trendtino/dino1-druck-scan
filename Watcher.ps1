@@ -220,6 +220,14 @@ function Schreibe-Log($text) {
     try { Add-Content -Path $LogDatei -Value $zeile -ErrorAction SilentlyContinue } catch {}
 }
 
+# ======================= VERSION =======================
+# Bei JEDER Aenderung am Programm hochzaehlen und das Datum anpassen - wird im
+# Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
+# (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
+# Uebersicht, welcher PC welchen Stand hat.)
+$script:WatcherVersion      = "12"
+$script:WatcherVersionDatum = "04.11.2026"
+
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
 # Bei einem automatischen Update bleibt der Abschnitt KONFIGURATION dieses
 # PCs unveraendert - Einstellungen, die erst in einer neueren Version
@@ -2269,7 +2277,7 @@ $menuUpdate.Add_Click({
 $menuUeber = $menu.Items.Add("Ueber PaperPort-Ersatz")
 $menuUeber.Add_Click({
     [System.Windows.Forms.MessageBox]::Show(
-        "PaperPort-Ersatz - Standort: $StandortName`nProgrammstand: $($script:EigeneCodeKennung)`nUpdate-Quelle: $(if ($UpdateQuelle) { $UpdateQuelle } else { '(keiner)' })`n`nInstallation von Dino1 GmbH und Andre Meschke",
+        "PaperPort-Ersatz - Standort: $StandortName`n$($script:EigeneVersionText) (Programmstand $($script:EigeneCodeKennung))`nUpdate-Quelle: $(if ($UpdateQuelle) { $UpdateQuelle } else { '(keiner)' })`n`nInstallation von Dino1 GmbH und Andre Meschke",
         "Ueber PaperPort-Ersatz") | Out-Null
 })
 [void]$menu.Items.Add("-")
@@ -2338,6 +2346,16 @@ function Lese-Text($pfad) {
 }
 
 $script:EigeneCodeKennung = "?"
+
+# Liest Versionsnummer und -datum aus dem Text einer Watcher.ps1
+function Ermittle-VersionText($text) {
+    $nr = "?"; $datum = "?"
+    if ($text -match '\$script:WatcherVersion\s*=\s*"([^"]*)"') { $nr = $matches[1] }
+    if ($text -match '\$script:WatcherVersionDatum\s*=\s*"([^"]*)"') { $datum = $matches[1] }
+    if ($nr -eq "?") { return "(ohne Versionsnummer)" }
+    return "Version $nr vom $datum"
+}
+$script:EigeneVersionText = "Version $($script:WatcherVersion) vom $($script:WatcherVersionDatum)"
 try {
     $eigeneTeile = Teile-WatcherText (Lese-Text $script:EigenerPfad)
     if ($eigeneTeile) { $script:EigeneCodeKennung = Ermittle-CodeKennung $eigeneTeile }
@@ -2410,8 +2428,9 @@ function Pruefe-AufUpdate([bool]$manuell) {
     }
 
     $neuKennung = Ermittle-CodeKennung $neuTeile
+    $neuVersion = Ermittle-VersionText $neuText
     if ($neuKennung -eq $script:EigeneCodeKennung) {
-        if ($manuell) { & $melde "Dieser PC ist auf dem aktuellen Stand (Programmstand $neuKennung)." ([System.Windows.Forms.MessageBoxIcon]::Information) }
+        if ($manuell) { & $melde "Dieser PC ist auf dem aktuellen Stand:`n`n$($script:EigeneVersionText)`n(Programmstand $neuKennung)" ([System.Windows.Forms.MessageBoxIcon]::Information) }
         return
     }
     if ($neuKennung -eq $script:AbgelehnteUpdateKennung -and -not $manuell) { return }
@@ -2424,7 +2443,7 @@ function Pruefe-AufUpdate([bool]$manuell) {
     if ($fehler -and $fehler.Count -gt 0) {
         $script:AbgelehnteUpdateKennung = $neuKennung
         $erster = $fehler[0]
-        & $melde "Update $neuKennung ABGELEHNT - die neue Watcher.ps1 enthaelt Syntaxfehler (Zeile $($erster.Extent.StartLineNumber): $($erster.Message)). Dieser PC arbeitet unveraendert weiter." ([System.Windows.Forms.MessageBoxIcon]::Error)
+        & $melde "Update auf $neuVersion ($neuKennung) ABGELEHNT - die neue Watcher.ps1 enthaelt Syntaxfehler (Zeile $($erster.Extent.StartLineNumber): $($erster.Message)). Dieser PC arbeitet unveraendert weiter." ([System.Windows.Forms.MessageBoxIcon]::Error)
         return
     }
 
@@ -2434,11 +2453,12 @@ function Pruefe-AufUpdate([bool]$manuell) {
         Set-Content -Path $script:EigenerPfad -Value $neuerInhalt -Encoding UTF8 -Force
     } catch {
         $script:AbgelehnteUpdateKennung = $neuKennung
-        & $melde "Update $neuKennung konnte nicht gespeichert werden: $($_.Exception.Message)" ([System.Windows.Forms.MessageBoxIcon]::Error)
+        & $melde "Update auf $neuVersion ($neuKennung) konnte nicht gespeichert werden: $($_.Exception.Message)" ([System.Windows.Forms.MessageBoxIcon]::Error)
         return
     }
 
-    Schreibe-Log "Update: Programmstand $($script:EigeneCodeKennung) -> $neuKennung uebernommen (Sicherung: $sicherung). Watcher startet neu."
+    Schreibe-Log "Update: $($script:EigeneVersionText) ($($script:EigeneCodeKennung)) -> $neuVersion ($neuKennung) uebernommen (Sicherung: $sicherung). Watcher startet neu."
+    if ($manuell) { [System.Windows.Forms.MessageBox]::Show("Update auf $neuVersion wurde installiert.`n`nDer Watcher startet jetzt neu.", "PaperPort-Ersatz Update", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null }
     Starte-WatcherNeu
 }
 
@@ -2475,6 +2495,6 @@ $timer.Add_Tick({
 })
 $timer.Start()
 
-Schreibe-Log "=== Watcher gestartet fuer Standort '$StandortName' (Programmstand $($script:EigeneCodeKennung)) ==="
+Schreibe-Log "=== Watcher gestartet fuer Standort '$StandortName' ($($script:EigeneVersionText), Programmstand $($script:EigeneCodeKennung)) ==="
 
 [System.Windows.Forms.Application]::Run()
