@@ -485,6 +485,10 @@ $txtUpdate.Width = 390
 # Ohne bisherigen Eintrag automatisch die offizielle Update-Quelle (GitHub)
 # vorschlagen - kann im Feld geaendert oder geleert werden.
 $StandardUpdateQuelle = "https://raw.githubusercontent.com/trendtino/dino1-druck-scan/main/Watcher.ps1"
+# Alte Adresse (GitHub-Projekt hiess frueher "paperport-ersatz") automatisch ersetzen
+if ($vorhandeneKonfig.UpdateQuelle -match '^https://raw\.githubusercontent\.com/trendtino/paperport-ersatz/') {
+    $vorhandeneKonfig.UpdateQuelle = $StandardUpdateQuelle
+}
 $txtUpdate.Text = if ([string]::IsNullOrWhiteSpace($vorhandeneKonfig.UpdateQuelle)) { $StandardUpdateQuelle } else { $vorhandeneKonfig.UpdateQuelle }
 $tabStandort.Controls.Add($txtUpdate)
 $tipUpdate = New-Object System.Windows.Forms.ToolTip
