@@ -6,7 +6,7 @@ Enthaltene Dateien:
 - Setup.cmd                    -> EINFACHSTER WEG: Doppelklicken, Rest ist ein Assistent
 - Setup.ps1                    -> wird von Setup.cmd automatisch aufgerufen
 - Watcher.ps1                  -> das eigentliche Erfassungs-Skript (Vorlage/Referenz)
-- Install-PaperPortErsatz.ps1  -> nur noch fuer die manuelle/alte Methode noetig
+- Install-DiNo1DruckScan.ps1  -> nur noch fuer die manuelle/alte Methode noetig
 - ANLEITUNG.txt                -> diese Datei
 - EINSTELLUNGEN.txt            -> Uebersicht ALLER Einstellungen
 - Diagnose.cmd / Diagnose.ps1  -> Fehlersuche: erstellt einen Bericht auf dem Desktop
@@ -297,7 +297,7 @@ gedacht (z.B. falls der Assistent aus irgendeinem Grund nicht startet):
 2. PowerShell oeffnen, in den Ordner mit den Skripten wechseln und
    ausfuehren:
 
-     powershell -ExecutionPolicy Bypass -File "Install-PaperPortErsatz.ps1"
+     powershell -ExecutionPolicy Bypass -File "Install-DiNo1DruckScan.ps1"
 
 3. "Dino1 Drucker" von Hand einrichten (ALS ADMINISTRATOR ausfuehren):
 
@@ -327,7 +327,7 @@ gedacht (z.B. falls der Assistent aus irgendeinem Grund nicht startet):
      Copy-Item ".\Watcher.ps1" "C:\PaperPortErsatz\Watcher.ps1" -Force
      Start-ScheduledTask -TaskName "PaperPort Ersatz Watcher"
 
-   (Oder, falls sich auch Install-PaperPortErsatz.ps1 geaendert hat, dieses
+   (Oder, falls sich auch Install-DiNo1DruckScan.ps1 geaendert hat, dieses
    stattdessen erneut als Administrator ausfuehren.)
 
 

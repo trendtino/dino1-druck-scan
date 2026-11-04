@@ -21,7 +21,7 @@ Abschnitt "Ausfuehrungsrichtlinie"
 try { Get-ExecutionPolicy -List | ForEach-Object { Z "$($_.Scope): $($_.ExecutionPolicy)" } } catch { Z "? $_" }
 
 Abschnitt "Setup-Dateien im selben Ordner"
-foreach ($f in "Setup.cmd","Setup.ps1","Watcher.ps1","Install-PaperPortErsatz.ps1") {
+foreach ($f in "Setup.cmd","Setup.ps1","Watcher.ps1","Install-DiNo1DruckScan.ps1") {
     $p = Join-Path $PSScriptRoot $f
     $motw = ""
     if (Test-Path $p) { try { if (Get-Item $p -Stream Zone.Identifier -ErrorAction Stop) { $motw = " (aus dem Internet markiert)" } } catch {} }

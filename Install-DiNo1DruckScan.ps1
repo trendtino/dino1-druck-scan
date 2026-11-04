@@ -1,5 +1,5 @@
 <#
-    Install-PaperPortErsatz.ps1
+    Install-DiNo1DruckScan.ps1
     ----------------------------
     Einmalig auf jedem PC ausfuehren, auf dem der DiNo1 Druck & Scan laufen soll.
     Kopiert den Watcher an einen festen Ort und richtet die geplante Aufgabe ein,
@@ -9,7 +9,7 @@
     Abschnitt "KONFIGURATION" anpassen (Standortname, HiDrive-Pfad, Mitarbeiter).
 
     Ausfuehren mit:
-      powershell -ExecutionPolicy Bypass -File "Install-PaperPortErsatz.ps1"
+      powershell -ExecutionPolicy Bypass -File "Install-DiNo1DruckScan.ps1"
 #>
 
 $ZielVerzeichnis = "C:\PaperPortErsatz"
