@@ -8,7 +8,7 @@ Auf jedem PC: Dateien herunterladen und **komplett entpacken**. Danach `Setup.cm
 
 ## Automatische Updates
 
-Trage im Setup unter **„Update-Quelle“** diese Adresse ein:
+Das Setup trägt unter **„Update-Quelle“** automatisch diese Adresse ein (kann dort geändert oder geleert werden):
 
 ```
 https://raw.githubusercontent.com/trendtino/paperport-ersatz/main/Watcher.ps1

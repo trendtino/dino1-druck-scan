@@ -482,7 +482,10 @@ $tabStandort.Controls.Add((Neues-Label "Update-Quelle (optional):" 10 $y $null $
 $txtUpdate = New-Object System.Windows.Forms.TextBox
 $txtUpdate.Location = New-Object System.Drawing.Point(200, ($y - 3))
 $txtUpdate.Width = 390
-$txtUpdate.Text = $vorhandeneKonfig.UpdateQuelle
+# Ohne bisherigen Eintrag automatisch die offizielle Update-Quelle (GitHub)
+# vorschlagen - kann im Feld geaendert oder geleert werden.
+$StandardUpdateQuelle = "https://raw.githubusercontent.com/trendtino/paperport-ersatz/main/Watcher.ps1"
+$txtUpdate.Text = if ([string]::IsNullOrWhiteSpace($vorhandeneKonfig.UpdateQuelle)) { $StandardUpdateQuelle } else { $vorhandeneKonfig.UpdateQuelle }
 $tabStandort.Controls.Add($txtUpdate)
 $tipUpdate = New-Object System.Windows.Forms.ToolTip
 $tipUpdate.SetToolTip($txtUpdate, "https://-Adresse der Watcher.ps1 (z.B. raw.githubusercontent.com/...) oder ein Ordner. Bei geaendertem Programmcode aktualisiert sich dieser PC automatisch. Leer = keine automatischen Updates.")

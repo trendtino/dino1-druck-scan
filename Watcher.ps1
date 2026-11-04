@@ -164,7 +164,7 @@ $LokalerOrdner = ""
 # geaenderter Programmcode, uebernimmt dieser PC ihn automatisch (die
 # Einstellungen in diesem Abschnitt bleiben erhalten) und startet neu.
 # Leer lassen = keine automatischen Updates.
-$UpdateQuelle = ""
+$UpdateQuelle = "https://raw.githubusercontent.com/trendtino/paperport-ersatz/main/Watcher.ps1"
 
 # Lokaler Ausweich-Ordner, falls HiDrive gerade nicht erreichbar ist
 # (Datei geht dann NICHT verloren, sondern liegt hier zur manuellen Pruefung)
