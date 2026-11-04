@@ -1,5 +1,5 @@
 <#
-    Diagnose.ps1 - PaperPort-Ersatz: Fehlersuche
+    Diagnose.ps1 - DiNo1 Druck & Scan: Fehlersuche
     Aendert NICHTS am PC, sammelt nur Informationen und legt einen Bericht
     "PaperPort-Diagnose.txt" auf den Desktop.
 #>

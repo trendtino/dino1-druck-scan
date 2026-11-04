@@ -1,5 +1,5 @@
 <#
-    Setup.ps1 - PaperPort-Ersatz: Alles-in-einem-Einrichtung
+    Setup.ps1 - DiNo1 Druck & Scan: Alles-in-einem-Einrichtung
     ------------------------------------------------------
     Zum Doppelklicken: "Setup.cmd" im selben Ordner ausfuehren (dieses
     Skript startet sich darueber automatisch mit Administrator-Rechten -
@@ -400,7 +400,7 @@ function Neues-Label($text, $x, $y, $breite, $hoehe, $grau) {
 }
 
 $form = New-Object System.Windows.Forms.Form
-$form.Text = "PaperPort-Ersatz einrichten"
+$form.Text = "DiNo1 Druck & Scan einrichten"
 # ClientSize statt Size: legt die tatsaechlich nutzbare Flaeche fest (ohne
 # Titelleiste/Rahmen), damit die Buttons unten unabhaengig von Windows-
 # Design/Skalierung nicht abgeschnitten werden.
@@ -484,7 +484,7 @@ $txtUpdate.Location = New-Object System.Drawing.Point(200, ($y - 3))
 $txtUpdate.Width = 390
 # Ohne bisherigen Eintrag automatisch die offizielle Update-Quelle (GitHub)
 # vorschlagen - kann im Feld geaendert oder geleert werden.
-$StandardUpdateQuelle = "https://raw.githubusercontent.com/trendtino/paperport-ersatz/main/Watcher.ps1"
+$StandardUpdateQuelle = "https://raw.githubusercontent.com/trendtino/dino1-druck-scan/main/Watcher.ps1"
 $txtUpdate.Text = if ([string]::IsNullOrWhiteSpace($vorhandeneKonfig.UpdateQuelle)) { $StandardUpdateQuelle } else { $vorhandeneKonfig.UpdateQuelle }
 $tabStandort.Controls.Add($txtUpdate)
 $tipUpdate = New-Object System.Windows.Forms.ToolTip
@@ -839,7 +839,7 @@ function Registriere-GeplanteAufgabe($taskName, $watcherPfad) {
 
         Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger `
             -Principal $principal -Settings $settings `
-            -Description "PaperPort-Ersatz: ueberwacht Ablageordner und ordnet Dokumente automatisch dem richtigen Standort/Mitarbeiter zu" `
+            -Description "DiNo1 Druck & Scan: ueberwacht Ablageordner und ordnet Dokumente automatisch dem richtigen Standort/Mitarbeiter zu" `
             -ErrorAction Stop | Out-Null
 
         Start-ScheduledTask -TaskName $taskName
@@ -989,7 +989,7 @@ $btnEinrichten.Add_Click({
         $meldung += "$AblageOrdner"
 
         $symbol = if ($warnungen.Count -gt 0) { [System.Windows.Forms.MessageBoxIcon]::Warning } else { [System.Windows.Forms.MessageBoxIcon]::Information }
-        [System.Windows.Forms.MessageBox]::Show($form, $meldung, "PaperPort-Ersatz", [System.Windows.Forms.MessageBoxButtons]::OK, $symbol) | Out-Null
+        [System.Windows.Forms.MessageBox]::Show($form, $meldung, "DiNo1 Druck & Scan", [System.Windows.Forms.MessageBoxButtons]::OK, $symbol) | Out-Null
 
         $form.Tag = "fertig"
         $form.Close()

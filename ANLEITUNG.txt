@@ -1,4 +1,4 @@
-PaperPort-Ersatz - Einrichtung auf einem neuen Mitarbeiter-PC
+DiNo1 Druck & Scan - Einrichtung auf einem neuen Mitarbeiter-PC
 ================================================================
 Installation von Dino1 GmbH und Andre Meschke
 
@@ -26,7 +26,7 @@ SCHRITT 2: Setup.cmd ausfuehren (einmal pro PC)
 Einfach per Doppelklick auf "Setup.cmd" starten.
 
   WICHTIG: Setup.cmd immer im Konto des MITARBEITERS starten, der den
-  PaperPort-Ersatz spaeter benutzt - NICHT im Admin-Konto anmelden. Fragt
+  DiNo1 Druck & Scan spaeter benutzt - NICHT im Admin-Konto anmelden. Fragt
   Windows nach einem Admin-Passwort, das Admin-Passwort dort einfach
   eingeben: der Watcher wird trotzdem fuer den angemeldeten Mitarbeiter
   eingerichtet (die Zusammenfassung am Ende zeigt, fuer welchen Benutzer).
@@ -116,7 +116,7 @@ automatisch das Erfassungsfenster.
 
 Variante B - Scannen:
 Unten rechts in der Windows-Taskleiste (Infobereich/Systray) erscheint ein
-kleines Symbol fuer PaperPort-Ersatz. Rechtsklick darauf -> "Jetzt scannen"
+kleines Symbol fuer DiNo1 Druck & Scan. Rechtsklick darauf -> "Jetzt scannen"
 (oder Doppelklick auf das Symbol). Es erscheint das Fenster "Scan-Optionen":
 
   Scanner      -> der zuletzt benutzte ist schon vorausgewaehlt
@@ -349,7 +349,7 @@ der PROGRAMMCODE geaendert hat, und uebernimmt ihn dann automatisch:
 Vor dem Hochladen in Watcher.ps1 (Abschnitt "VERSION") die Nummer
 $script:WatcherVersion hochzaehlen und $script:WatcherVersionDatum anpassen.
 Sofort pruefen: Rechtsklick aufs Tray-Symbol -> "Nach Updates suchen".
-Welche Version laeuft, zeigt "Ueber PaperPort-Ersatz" (Version + Datum) und
+Welche Version laeuft, zeigt "Ueber DiNo1 Druck & Scan" (Version + Datum) und
 die Log-Datei.
 
 WICHTIG:

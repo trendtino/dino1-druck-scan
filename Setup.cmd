@@ -1,5 +1,5 @@
 @echo off
-REM PaperPort-Ersatz - Einrichtung starten (per Doppelklick)
+REM DiNo1 Druck und Scan - Einrichtung starten (per Doppelklick)
 REM Startet Setup.ps1, das sich bei Bedarf selbst mit Administrator-Rechten
 REM neu startet (Windows-Sicherheitsabfrage erscheint automatisch).
 

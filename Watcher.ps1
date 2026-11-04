@@ -1,5 +1,5 @@
 <#
-    PaperPort-Ersatz: Ablage-Watcher (Produktivversion)
+    DiNo1 Druck & Scan: Ablage-Watcher (Produktivversion)
     ------------------------------------------------------
     Laeuft unsichtbar im Hintergrund (per geplanter Aufgabe gestartet), mit
     einem kleinen Symbol im Infobereich (Systray) unten rechts.
@@ -164,7 +164,7 @@ $LokalerOrdner = ""
 # geaenderter Programmcode, uebernimmt dieser PC ihn automatisch (die
 # Einstellungen in diesem Abschnitt bleiben erhalten) und startet neu.
 # Leer lassen = keine automatischen Updates.
-$UpdateQuelle = "https://raw.githubusercontent.com/trendtino/paperport-ersatz/main/Watcher.ps1"
+$UpdateQuelle = "https://raw.githubusercontent.com/trendtino/dino1-druck-scan/main/Watcher.ps1"
 
 # Lokaler Ausweich-Ordner, falls HiDrive gerade nicht erreichbar ist
 # (Datei geht dann NICHT verloren, sondern liegt hier zur manuellen Pruefung)
@@ -225,7 +225,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "12"
+$script:WatcherVersion      = "13"
 $script:WatcherVersionDatum = "04.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -237,6 +237,8 @@ $script:WatcherVersionDatum = "04.11.2026"
 # PCs (bis dort Setup.cmd erneut ausgefuehrt wird).
 if ($null -eq $LokalerOrdner) { $LokalerOrdner = "" }
 if ($null -eq $UpdateQuelle)  { $UpdateQuelle = "" }
+# Das GitHub-Projekt hiess frueher "paperport-ersatz" - alte Adresse auf die neue umstellen
+if ($UpdateQuelle -eq "https://raw.githubusercontent.com/trendtino/paperport-ersatz/main/Watcher.ps1") { $UpdateQuelle = "https://raw.githubusercontent.com/trendtino/dino1-druck-scan/main/Watcher.ps1" }
 
 if ([string]::IsNullOrWhiteSpace($LokalerOrdner)) {
     $LokalerOrdner = Join-Path ([Environment]::GetFolderPath("MyDocuments")) "Scans"
@@ -827,7 +829,7 @@ function Drucke-BilderStumm($bildPfade, $druckerName) {
 
     $doc = New-Object System.Drawing.Printing.PrintDocument
     $doc.PrinterSettings.PrinterName = $druckerName
-    $doc.DocumentName = "PaperPort-Ersatz Scan ($($bildPfade.Count) Seite(n))"
+    $doc.DocumentName = "DiNo1 Druck & Scan Scan ($($bildPfade.Count) Seite(n))"
 
     if (-not $doc.PrinterSettings.IsValid) {
         throw "Drucker '$druckerName' wurde auf diesem PC nicht gefunden."
@@ -2225,7 +2227,7 @@ function Erstelle-ScannerIcon {
 
 $trayIcon = New-Object System.Windows.Forms.NotifyIcon
 $trayIcon.Icon = Erstelle-ScannerIcon
-$trayIcon.Text = "PaperPort-Ersatz ($StandortName)"
+$trayIcon.Text = "DiNo1 Druck & Scan ($StandortName)"
 $trayIcon.Visible = $true
 
 $menu = New-Object System.Windows.Forms.ContextMenuStrip
@@ -2274,11 +2276,11 @@ $menuUpdate.Add_Click({
     try { Pruefe-AufUpdate $true } finally { if (-not $script:WirdBeendet) { try { $timer.Start() } catch {} } }
 })
 [void]$menu.Items.Add("-")
-$menuUeber = $menu.Items.Add("Ueber PaperPort-Ersatz")
+$menuUeber = $menu.Items.Add("Ueber DiNo1 Druck && Scan")
 $menuUeber.Add_Click({
     [System.Windows.Forms.MessageBox]::Show(
-        "PaperPort-Ersatz - Standort: $StandortName`n$($script:EigeneVersionText) (Programmstand $($script:EigeneCodeKennung))`nUpdate-Quelle: $(if ($UpdateQuelle) { $UpdateQuelle } else { '(keiner)' })`n`nInstallation von Dino1 GmbH und Andre Meschke",
-        "Ueber PaperPort-Ersatz") | Out-Null
+        "DiNo1 Druck & Scan - Standort: $StandortName`n$($script:EigeneVersionText) (Programmstand $($script:EigeneCodeKennung))`nUpdate-Quelle: $(if ($UpdateQuelle) { $UpdateQuelle } else { '(keiner)' })`n`nInstallation von Dino1 GmbH und Andre Meschke",
+        "Ueber DiNo1 Druck & Scan") | Out-Null
 })
 [void]$menu.Items.Add("-")
 $menuBeenden = $menu.Items.Add("Watcher beenden")
@@ -2365,7 +2367,7 @@ function Pruefe-AufUpdate([bool]$manuell) {
     $melde = {
         param($text, $icon)
         Schreibe-Log "Update: $text"
-        if ($manuell) { [System.Windows.Forms.MessageBox]::Show($text, "PaperPort-Ersatz Update", [System.Windows.Forms.MessageBoxButtons]::OK, $icon) | Out-Null }
+        if ($manuell) { [System.Windows.Forms.MessageBox]::Show($text, "DiNo1 Druck & Scan Update", [System.Windows.Forms.MessageBoxButtons]::OK, $icon) | Out-Null }
     }
     if ([string]::IsNullOrWhiteSpace($UpdateQuelle)) {
         if ($manuell) { & $melde "Fuer diesen PC ist keine Update-Quelle eingetragen (Setup -> 'Update-Quelle')." ([System.Windows.Forms.MessageBoxIcon]::Information) }
@@ -2458,7 +2460,7 @@ function Pruefe-AufUpdate([bool]$manuell) {
     }
 
     Schreibe-Log "Update: $($script:EigeneVersionText) ($($script:EigeneCodeKennung)) -> $neuVersion ($neuKennung) uebernommen (Sicherung: $sicherung). Watcher startet neu."
-    if ($manuell) { [System.Windows.Forms.MessageBox]::Show("Update auf $neuVersion wurde installiert.`n`nDer Watcher startet jetzt neu.", "PaperPort-Ersatz Update", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null }
+    if ($manuell) { [System.Windows.Forms.MessageBox]::Show("Update auf $neuVersion wurde installiert.`n`nDer Watcher startet jetzt neu.", "DiNo1 Druck & Scan Update", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null }
     Starte-WatcherNeu
 }
 

@@ -1,4 +1,4 @@
-PaperPort-Ersatz - Uebersicht ALLER Einstellungen (Paket 12)
+DiNo1 Druck & Scan - Uebersicht ALLER Einstellungen (Paket 13)
 ================================================================
 Installation von Dino1 GmbH und Andre Meschke
 
@@ -189,7 +189,7 @@ Uebersprungene Dokumente erfassen (n) holt zurueckgestellte Dokumente
                                       zur erneuten Erfassung zurueck
 Ablage-Ordner oeffnen                 oeffnet C:\PaperPortErsatz\Ablage
 Status: Log-Datei oeffnen             Protokoll ansehen
-Ueber PaperPort-Ersatz
+Ueber DiNo1 Druck & Scan
 Watcher beenden
 
 

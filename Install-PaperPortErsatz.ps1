@@ -1,7 +1,7 @@
 <#
     Install-PaperPortErsatz.ps1
     ----------------------------
-    Einmalig auf jedem PC ausfuehren, auf dem der PaperPort-Ersatz laufen soll.
+    Einmalig auf jedem PC ausfuehren, auf dem der DiNo1 Druck & Scan laufen soll.
     Kopiert den Watcher an einen festen Ort und richtet die geplante Aufgabe ein,
     die ihn bei jeder Anmeldung automatisch und unsichtbar startet.
 
@@ -66,7 +66,7 @@ $settings = New-ScheduledTaskSettingsSet `
 try {
     Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
         -Principal $principal -Settings $settings `
-        -Description "PaperPort-Ersatz: ueberwacht Ablageordner und ordnet Dokumente automatisch dem richtigen Standort/Mitarbeiter zu" `
+        -Description "DiNo1 Druck & Scan: ueberwacht Ablageordner und ordnet Dokumente automatisch dem richtigen Standort/Mitarbeiter zu" `
         -ErrorAction Stop | Out-Null
 } catch {
     Write-Host ""
