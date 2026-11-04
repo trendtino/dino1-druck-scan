@@ -1,4 +1,4 @@
-DiNo1 Druck & Scan - Uebersicht ALLER Einstellungen (Paket 13)
+DiNo1 Druck & Scan - Uebersicht ALLER Einstellungen (Paket 14)
 ================================================================
 Installation von Dino1 GmbH und Andre Meschke
 
@@ -138,6 +138,8 @@ Tray-Symbol -> Rechtsklick -> "Jetzt scannen" (oder Doppelklick)
   Farbe          Farbe / Graustufen / Schwarzweiss
   Qualitaet      150 / 200 / 300 dpi
   Leere Seiten   automatisch entfernen ja/nein
+  Stapel trennen an leeren Blaettern in einzelne Dokumente teilen (nur
+                 Einzug, siehe "NEU IN PAKET 14")
 
 
 ================================================================
@@ -189,6 +191,8 @@ Uebersprungene Dokumente erfassen (n) holt zurueckgestellte Dokumente
                                       zur erneuten Erfassung zurueck
 Ablage-Ordner oeffnen                 oeffnet C:\PaperPortErsatz\Ablage
 Status: Log-Datei oeffnen             Protokoll ansehen
+Nach Updates suchen                   sofort pruefen (sonst ca. alle 10 Min.)
+Vorherige Version wiederherstellen    macht das letzte Update rueckgaengig
 Ueber DiNo1 Druck & Scan
 Watcher beenden
 
@@ -200,10 +204,13 @@ ERFASSUNGSFENSTER (nach jedem Druck/Scan)
 Wohin speichern?   Mitarbeiter-Ordner / Shop-Ordner / Kasse / Nur lokal (PC)
 Mitarbeiter        nur bei Mitarbeiter-Ordner
 Bezeichnung        Pflicht bei Mitarbeiter/Shop, bei Kasse optional
-                   (leer = "Kassenabschluss"); Vorschlaege beim Tippen
+                   (leer = "Kassenabschluss"); Vorschlaege beim Tippen.
+                   Gelb hinterlegt = Name, der schon einmal verwendet wurde
+                   und im Dokument erkannt wurde (bitte pruefen)
 Datum              bestimmt Dateinamen (Datum_Bezeichnung.pdf) und bei
                    Kasse den Monatsordner
 Ansehen            oeffnet das Dokument im PDF-Programm
+Vorschau (rechts)  erste Seite; Klick darauf = Ansehen
 Ablegen            verschiebt die Datei an das Ziel
 Ueberspringen      stellt das Dokument zurueck (Ordner Uebersprungen)
 
@@ -226,3 +233,42 @@ NEU IN PAKET 8
 - Dateien in C:\PaperPortErsatz\Nicht_uebertragen werden ca. alle 5
   Minuten automatisch an ihr HiDrive-Ziel verschoben, sobald es wieder
   erreichbar ist (steht im Log als "Nachtraeglich uebertragen").
+
+
+================================================================
+NEU IN PAKET 14 (Version 14)
+================================================================
+
+Diese Einstellungen stehen nur in Watcher.ps1 (Abschnitt KONFIGURATION),
+nicht im Setup-Fenster:
+
+$OcrAktiv = $true          Texterkennung (in Windows eingebaut, offline):
+                           gescannte PDFs sind durchsuchbar, und das
+                           Erfassungsfenster schlaegt einen bekannten
+                           Kundennamen aus dem Dokument vor. Braucht das
+                           deutsche Sprachpaket (ist bei deutschem Windows
+                           normalerweise da). Fehlt es, laeuft alles wie
+                           bisher, nur ohne Text.
+$VorschauAktiv = $true     Vorschau der ersten Seite im Erfassungsfenster
+$StatusOrdner = ""         Ordner fuer die Statusdateien aller PCs.
+                           Leer = neben dem Mitarbeiter-Ordner, z.B.
+                           X:\DiNo1-Druck-Scan-Status. "-" = aus.
+
+Weitere Neuerungen:
+- Scan-Optionen: "Stapel an leeren Blaettern in Dokumente trennen"
+  (nur Einzug). Mehrere Dokumente auf einmal einlegen, dazwischen je ein
+  leeres Blatt - jedes Dokument wird einzeln (Scan_..._Teil1, _Teil2 ...)
+  abgelegt und abgefragt. Bei beidseitigem Scan zaehlt ein Blatt nur als
+  Trenner, wenn beide Seiten leer sind.
+- Warnhinweis am Tray-Symbol, wenn HiDrive nicht erreichbar ist oder
+  Dokumente laenger in Nicht_uebertragen liegen (hoechstens 1x pro Stunde;
+  Klick auf den Hinweis oeffnet den Ordner).
+- Uebersicht.cmd (im Paket): zeigt alle PCs aus dem Status-Ordner mit
+  Version, letzter Meldung, HiDrive-Zustand, nicht uebertragenen
+  Dokumenten und letztem Fehler. Kein Admin noetig.
+- Tray -> "Vorherige Version wiederherstellen": zurueck auf den Stand vor
+  dem letzten Update. Diese Version wird danach nicht sofort wieder
+  automatisch installiert (erst eine neuere oder "Nach Updates suchen").
+  Zurueck auf Version 13 oder aelter schaltet die automatischen Updates
+  aus (die alten Versionen kennen die Sperre nicht) - dann Setup.cmd
+  erneut ausfuehren, um sie wieder einzuschalten.

@@ -345,6 +345,8 @@ der PROGRAMMCODE geaendert hat, und uebernimmt ihn dann automatisch:
     die Beispielwerte in der hochgeladenen Datei werden ignoriert
   - eine Datei mit Syntaxfehlern wird abgelehnt, der PC arbeitet weiter
   - die vorherige Version liegt als C:\PaperPortErsatz\Watcher_vorher.ps1
+    (Tray -> "Vorherige Version wiederherstellen" macht das Update
+    rueckgaengig, ab Version 14)
   - der Watcher startet sich danach selbst neu
 Vor dem Hochladen in Watcher.ps1 (Abschnitt "VERSION") die Nummer
 $script:WatcherVersion hochzaehlen und $script:WatcherVersionDatum anpassen.
@@ -363,3 +365,13 @@ WICHTIG:
     per Update nicht an - dafuer im Abschnitt "STANDARDWERTE FUER NEUERE
     EINSTELLUNGEN" einen Standardwert eintragen oder Setup.cmd erneut
     ausfuehren. Aenderungen an Setup.ps1 selbst werden nicht verteilt.
+
+
+UEBERSICHT ALLER PCs (ab Paket 14)
+------------------------------------------------------
+Jeder PC schreibt etwa alle 5 Minuten eine kleine Statusdatei nach
+X:\DiNo1-Druck-Scan-Status (bzw. neben den Mitarbeiter-Ordner, Einstellung
+$StatusOrdner). Uebersicht.cmd aus dem Paket doppelklicken - es zeigt alle
+PCs mit Version, letzter Meldung, HiDrive erreichbar ja/nein, nicht
+uebertragenen Dokumenten, letzter Ablage und letztem Fehler.
+Rot = Problem, grau = PC meldet sich seit ueber 30 Minuten nicht.

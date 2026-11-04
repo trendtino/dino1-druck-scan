@@ -166,6 +166,22 @@ $LokalerOrdner = ""
 # Leer lassen = keine automatischen Updates.
 $UpdateQuelle = "https://raw.githubusercontent.com/trendtino/dino1-druck-scan/main/Watcher.ps1"
 
+# Texterkennung (OCR, in Windows 10/11 eingebaut, arbeitet ohne Internet):
+# Gescannte PDFs werden durchsuchbar (Text suchen/markieren/kopieren), und das
+# Erfassungsfenster schlaegt einen schon einmal verwendeten Kundennamen vor,
+# wenn er im Dokument vorkommt. $false = aus.
+$OcrAktiv = $true
+
+# Kleine Vorschau der ersten Seite im Erfassungsfenster anzeigen ($false = aus)
+$VorschauAktiv = $true
+
+# Ordner, in den dieser PC alle paar Minuten eine kleine Statusdatei schreibt
+# (Version, letzte Ablage, Fehler, wartende Dateien). Uebersicht.cmd zeigt
+# daraus alle PCs auf einen Blick. Leer lassen = Ordner
+# "DiNo1-Druck-Scan-Status" neben dem Mitarbeiter-Ordner (bei X:\Mitarbeiter
+# also X:\DiNo1-Druck-Scan-Status). "-" = keine Statusdatei schreiben.
+$StatusOrdner = ""
+
 # Lokaler Ausweich-Ordner, falls HiDrive gerade nicht erreichbar ist
 # (Datei geht dann NICHT verloren, sondern liegt hier zur manuellen Pruefung)
 $AusweichOrdner = "C:\PaperPortErsatz\Nicht_uebertragen"
@@ -218,6 +234,9 @@ function Schreibe-Log($text) {
     if (($script:LogZaehler % 200) -eq 0) { Pruefe-LogGroesse }
     $zeile = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  $text"
     try { Add-Content -Path $LogDatei -Value $zeile -ErrorAction SilentlyContinue } catch {}
+    # fuer die Statusdatei (siehe Schreibe-Status)
+    if ("$text".StartsWith("Abgelegt (")) { $script:LetzteAblage = $zeile }
+    if ("$text" -cmatch 'FEHLER') { $script:LetzterFehler = $zeile }
 }
 
 # ======================= VERSION =======================
@@ -225,7 +244,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "13"
+$script:WatcherVersion      = "14"
 $script:WatcherVersionDatum = "04.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -237,11 +256,17 @@ $script:WatcherVersionDatum = "04.11.2026"
 # PCs (bis dort Setup.cmd erneut ausgefuehrt wird).
 if ($null -eq $LokalerOrdner) { $LokalerOrdner = "" }
 if ($null -eq $UpdateQuelle)  { $UpdateQuelle = "" }
+if ($null -eq $OcrAktiv)      { $OcrAktiv = $true }
+if ($null -eq $VorschauAktiv) { $VorschauAktiv = $true }
+if ($null -eq $StatusOrdner)  { $StatusOrdner = "" }
 # Das GitHub-Projekt hiess frueher "paperport-ersatz" - alte Adresse auf die neue umstellen
 if ($UpdateQuelle -eq "https://raw.githubusercontent.com/trendtino/paperport-ersatz/main/Watcher.ps1") { $UpdateQuelle = "https://raw.githubusercontent.com/trendtino/dino1-druck-scan/main/Watcher.ps1" }
 
 if ([string]::IsNullOrWhiteSpace($LokalerOrdner)) {
     $LokalerOrdner = Join-Path ([Environment]::GetFolderPath("MyDocuments")) "Scans"
+}
+if ([string]::IsNullOrWhiteSpace($StatusOrdner)) {
+    try { $StatusOrdner = Join-Path (Split-Path $ZielBasis -Parent) "DiNo1-Druck-Scan-Status" } catch { $StatusOrdner = "-" }
 }
 
 # Ordner anlegen, falls sie noch nicht existieren
@@ -282,7 +307,10 @@ try {
 # Hilfsfunktionen in C# (deutlich schneller als reines PowerShell):
 #   PpeBild.LadeAlsJpeg      - Scan-Bild in JPEG umwandeln (fuer die PDF)
 #   PpeBild.DunkelAnteil     - Anteil dunkler Bildpunkte (Leerseiten-Erkennung)
-#   PpePdf.Schreibe          - PDF aus JPEG-Seiten erzeugen
+#   PpePdf.Schreibe          - PDF aus JPEG-Seiten erzeugen (optional mit
+#                              unsichtbarer Textebene aus der Texterkennung)
+#   PpePdf.TextEbene         - erkannte Woerter als unsichtbaren PDF-Text setzen
+#   PpeBild.SpeichereFuerOcr - Bild fuer die Texterkennung vorbereiten
 Add-Type -ReferencedAssemblies System.Drawing -TypeDefinition @"
 using System;
 using System.IO;
@@ -391,6 +419,30 @@ public static class PpeBild {
         }
     }
 
+    // Speichert das Bild als PNG fuer die Windows-Texterkennung. Ist es
+    // groesser als "maxSeite" Bildpunkte, wird es verkleinert. Rueckgabe:
+    // Verkleinerungsfaktor (1 = unveraendert), damit die erkannten
+    // Wort-Positionen wieder auf das Original umgerechnet werden koennen.
+    public static double SpeichereFuerOcr(string pfad, string ziel, int maxSeite) {
+        using (Image quelle = Image.FromFile(pfad)) {
+            int w = quelle.Width;
+            int h = quelle.Height;
+            double f = 1.0;
+            if (maxSeite > 0 && Math.Max(w, h) > maxSeite) { f = (double)maxSeite / Math.Max(w, h); }
+            int nw = Math.Max(1, (int)Math.Floor(w * f));
+            int nh = Math.Max(1, (int)Math.Floor(h * f));
+            using (Bitmap b = new Bitmap(nw, nh, PixelFormat.Format24bppRgb)) {
+                using (Graphics g = Graphics.FromImage(b)) {
+                    g.Clear(Color.White);
+                    g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                    g.DrawImage(quelle, 0, 0, nw, nh);
+                }
+                b.Save(ziel, ImageFormat.Png);
+            }
+            return (double)nw / w;
+        }
+    }
+
     // Anteil (Prozent) dunkler Bildpunkte, ohne 5 % Rand ringsum (dort
     // liegen oft Schatten/Kanten vom Scanner). Jeder 2. Bildpunkt reicht.
     public static double DunkelAnteil(string pfad) {
@@ -442,8 +494,57 @@ public static class PpePdf {
 
     // schwarzweiss[i] = true: Seite i enthaelt 1-Bit-Daten (Flate) statt JPEG
     public static void Schreibe(string ziel, byte[][] jpegs, int[] breite, int[] hoehe, double[] dpiX, double[] dpiY, bool[] schwarzweiss) {
+        Schreibe(ziel, jpegs, breite, hoehe, dpiX, dpiY, schwarzweiss, null);
+    }
+
+    // Baut aus den erkannten Woertern einer Seite (Positionen in Bildpunkten
+    // des Seitenbildes) unsichtbaren Text (Darstellungsart 3 = unsichtbar).
+    // Der Text liegt genau ueber den Woertern im Bild - so kann man in der PDF
+    // suchen und Text markieren, sieht aber weiterhin nur den Scan.
+    public static string TextEbene(string[] woerter, double[] x, double[] y, double[] w, double[] h, double dpiX, double dpiY, int hoehePx) {
+        if (woerter == null || woerter.Length == 0) { return ""; }
+        Encoding ansi;
+        try { ansi = Encoding.GetEncoding(1252); } catch { ansi = Encoding.ASCII; }
+        double kx = 72.0 / dpiX;
+        double ky = 72.0 / dpiY;
+        double hPt = hoehePx * ky;
+        StringBuilder sb = new StringBuilder();
+        sb.Append("BT 3 Tr\n");
+        for (int i = 0; i < woerter.Length; i++) {
+            string wort = woerter[i];
+            if (string.IsNullOrEmpty(wort) || h[i] <= 0 || w[i] <= 0) { continue; }
+            wort = wort + " ";
+            double fs = h[i] * ky;
+            if (fs < 1) { fs = 1; }
+            // Helvetica: mittlere Zeichenbreite etwa 0.5 der Schriftgroesse
+            double tz = 100.0 * (w[i] * kx) / (fs * 0.5 * wort.Length);
+            if (tz < 10) { tz = 10; }
+            if (tz > 500) { tz = 500; }
+            double px = x[i] * kx;
+            double py = hPt - (y[i] + h[i]) * ky + 0.2 * fs;
+            sb.Append("/F1 " + Z(fs) + " Tf " + Z(tz) + " Tz 1 0 0 1 " + Z(px) + " " + Z(py) + " Tm (");
+            foreach (byte b in ansi.GetBytes(wort)) {
+                if (b < 32 || b > 126 || b == 40 || b == 41 || b == 92) {
+                    sb.Append("\\" + Convert.ToString(b, 8).PadLeft(3, '0'));
+                } else {
+                    sb.Append((char)b);
+                }
+            }
+            sb.Append(") Tj\n");
+        }
+        sb.Append("ET");
+        return sb.ToString();
+    }
+
+    // textEbene[i]: unsichtbarer Text fuer Seite i (siehe TextEbene) oder null
+    public static void Schreibe(string ziel, byte[][] jpegs, int[] breite, int[] hoehe, double[] dpiX, double[] dpiY, bool[] schwarzweiss, string[] textEbene) {
         int n = jpegs.Length;
-        long[] pos = new long[3 + 3 * n];
+        bool mitText = false;
+        if (textEbene != null) {
+            foreach (string te in textEbene) { if (!string.IsNullOrEmpty(te)) { mitText = true; break; } }
+        }
+        int schriftNr = 3 + 3 * n;
+        long[] pos = new long[4 + 3 * n];
         using (FileStream s = new FileStream(ziel, FileMode.Create, FileAccess.Write)) {
             T(s, "%PDF-1.4\n");
             byte[] binaerKennung = new byte[] { 0x25, 0xE2, 0xE3, 0xCF, 0xD3, 0x0A };
@@ -465,11 +566,13 @@ public static class PpePdf {
                 double hPt = hoehe[i] * 72.0 / dpiY[i];
 
                 pos[seiteNr] = s.Position;
-                T(s, seiteNr + " 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 " + Z(wPt) + " " + Z(hPt) + "] /Resources << /XObject << /Im0 " + bildNr + " 0 R >> >> /Contents " + inhaltNr + " 0 R >>\nendobj\n");
+                string schrift = mitText ? " /Font << /F1 " + schriftNr + " 0 R >>" : "";
+                T(s, seiteNr + " 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 " + Z(wPt) + " " + Z(hPt) + "] /Resources << /XObject << /Im0 " + bildNr + " 0 R >>" + schrift + " >> /Contents " + inhaltNr + " 0 R >>\nendobj\n");
 
                 string inhalt = "q " + Z(wPt) + " 0 0 " + Z(hPt) + " 0 0 cm /Im0 Do Q";
+                if (mitText && !string.IsNullOrEmpty(textEbene[i])) { inhalt += "\n" + textEbene[i]; }
                 pos[inhaltNr] = s.Position;
-                T(s, inhaltNr + " 0 obj\n<< /Length " + inhalt.Length + " >>\nstream\n" + inhalt + "\nendstream\nendobj\n");
+                T(s, inhaltNr + " 0 obj\n<< /Length " + Encoding.ASCII.GetByteCount(inhalt) + " >>\nstream\n" + inhalt + "\nendstream\nendobj\n");
 
                 pos[bildNr] = s.Position;
                 string bildArt = schwarzweiss[i]
@@ -480,8 +583,13 @@ public static class PpePdf {
                 T(s, "\nendstream\nendobj\n");
             }
 
-            long xref = s.Position;
             int anzahl = 3 + 3 * n;
+            if (mitText) {
+                pos[schriftNr] = s.Position;
+                T(s, schriftNr + " 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>\nendobj\n");
+                anzahl = 4 + 3 * n;
+            }
+            long xref = s.Position;
             T(s, "xref\n0 " + anzahl + "\n0000000000 65535 f \n");
             for (int k = 1; k < anzahl; k++) {
                 T(s, pos[k].ToString("0000000000", CultureInfo.InvariantCulture) + " 00000 n \n");
@@ -557,10 +665,207 @@ function Merke-Bezeichnung($text) {
     } catch {}
 }
 
-function Zeige-Erfassungsdialog($dateiname, $dateipfad) {
+# ======================= TEXTERKENNUNG (OCR) UND VORSCHAU =======================
+# Nutzt die in Windows 10/11 eingebaute Texterkennung (Windows.Media.Ocr) und
+# die PDF-Anzeige von Windows (Windows.Data.Pdf) - es muss nichts zusaetzlich
+# installiert werden, und es geht nichts ins Internet. Fehlt etwas (z.B. kein
+# deutsches Sprachpaket), laeuft alles wie bisher, nur ohne Text/Vorschau.
+$script:WinRtGeprueft = $false
+$script:WinRtBereit = $false
+$script:AsTaskOperation = $null
+$script:AsTaskAktion = $null
+$script:OcrGeprueft = $false
+$script:OcrEngine = $null
+
+function Initialisiere-WinRT {
+    if ($script:WinRtGeprueft) { return $script:WinRtBereit }
+    $script:WinRtGeprueft = $true
+    try {
+        Add-Type -AssemblyName System.Runtime.WindowsRuntime
+        $null = [Windows.Foundation.IAsyncOperation`1, Windows.Foundation, ContentType = WindowsRuntime]
+        $null = [Windows.Storage.StorageFile, Windows.Storage, ContentType = WindowsRuntime]
+        $null = [Windows.Storage.FileAccessMode, Windows.Storage, ContentType = WindowsRuntime]
+        $null = [Windows.Storage.Streams.IRandomAccessStream, Windows.Storage.Streams, ContentType = WindowsRuntime]
+        $null = [Windows.Storage.Streams.InMemoryRandomAccessStream, Windows.Storage.Streams, ContentType = WindowsRuntime]
+        $null = [Windows.Graphics.Imaging.BitmapDecoder, Windows.Graphics, ContentType = WindowsRuntime]
+        $null = [Windows.Graphics.Imaging.SoftwareBitmap, Windows.Graphics, ContentType = WindowsRuntime]
+        $null = [Windows.Media.Ocr.OcrEngine, Windows.Foundation, ContentType = WindowsRuntime]
+        $null = [Windows.Media.Ocr.OcrResult, Windows.Foundation, ContentType = WindowsRuntime]
+        $null = [Windows.Globalization.Language, Windows.Globalization, ContentType = WindowsRuntime]
+        $null = [Windows.Data.Pdf.PdfDocument, Windows.Data.Pdf, ContentType = WindowsRuntime]
+        $null = [Windows.Data.Pdf.PdfPageRenderOptions, Windows.Data.Pdf, ContentType = WindowsRuntime]
+        $methoden = @([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 })
+        $script:AsTaskOperation = $methoden | Where-Object { $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1' } | Select-Object -First 1
+        $script:AsTaskAktion = $methoden | Where-Object { $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncAction' } | Select-Object -First 1
+        if ($null -eq $script:AsTaskOperation -or $null -eq $script:AsTaskAktion) { throw "AsTask nicht gefunden" }
+        $script:WinRtBereit = $true
+    } catch {
+        Schreibe-Log "HINWEIS: Windows-Funktionen fuer Texterkennung/Vorschau nicht verfuegbar: $($_.Exception.Message)"
+    }
+    return $script:WinRtBereit
+}
+
+# Wartet auf eine asynchrone Windows-Funktion (max. 60 Sekunden)
+function Warte-WinRT($operation, [Type]$ergebnisTyp) {
+    $task = $script:AsTaskOperation.MakeGenericMethod($ergebnisTyp).Invoke($null, @($operation))
+    if (-not $task.Wait(60000)) { throw "Zeitueberschreitung" }
+    return $task.Result
+}
+
+function Warte-WinRTAktion($aktion) {
+    $task = $script:AsTaskAktion.Invoke($null, @($aktion))
+    if (-not $task.Wait(60000)) { throw "Zeitueberschreitung" }
+}
+
+function Initialisiere-Ocr {
+    if ($script:OcrGeprueft) { return ($null -ne $script:OcrEngine) }
+    $script:OcrGeprueft = $true
+    if (-not $OcrAktiv) { return $false }
+    if (-not (Initialisiere-WinRT)) { return $false }
+    try {
+        $engine = $null
+        try { $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromLanguage([Windows.Globalization.Language]::new("de-DE")) } catch {}
+        if ($null -eq $engine) { $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages() }
+        if ($null -eq $engine) { throw "keine Sprache fuer die Texterkennung installiert (Windows-Einstellungen -> Sprache -> Deutsch)" }
+        $script:OcrEngine = $engine
+        Schreibe-Log "Texterkennung bereit (Sprache: $($engine.RecognizerLanguage.LanguageTag))."
+    } catch {
+        Schreibe-Log "HINWEIS: Texterkennung (OCR) nicht verfuegbar: $($_.Exception.Message) - Dokumente werden ohne Text abgelegt."
+    }
+    return ($null -ne $script:OcrEngine)
+}
+
+# Erkennt den Text in einem Bild. Rueckgabe: Text (zeilenweise) und die
+# einzelnen Woerter mit Position in Bildpunkten des Originalbildes - oder
+# $null, wenn die Texterkennung nicht verfuegbar ist bzw. fehlschlaegt.
+function Erkenne-Text($bildPfad) {
+    if (-not (Initialisiere-Ocr)) { return $null }
+    $ocrDatei = Join-Path $ScanTempOrdner ("Ocr_" + [guid]::NewGuid().ToString("N") + ".png")
+    $stream = $null
+    try {
+        $maxSeite = 0
+        try { $maxSeite = [int][Windows.Media.Ocr.OcrEngine]::MaxImageDimension } catch {}
+        if ($maxSeite -le 0) { $maxSeite = 2600 }
+        $faktor = [PpeBild]::SpeichereFuerOcr($bildPfad, $ocrDatei, $maxSeite)
+        $datei   = Warte-WinRT ([Windows.Storage.StorageFile]::GetFileFromPathAsync($ocrDatei)) ([Windows.Storage.StorageFile])
+        $stream  = Warte-WinRT ($datei.OpenAsync([Windows.Storage.FileAccessMode]::Read)) ([Windows.Storage.Streams.IRandomAccessStream])
+        $decoder = Warte-WinRT ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream)) ([Windows.Graphics.Imaging.BitmapDecoder])
+        $bitmap  = Warte-WinRT ($decoder.GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])
+        $ergebnis = Warte-WinRT ($script:OcrEngine.RecognizeAsync($bitmap)) ([Windows.Media.Ocr.OcrResult])
+        try { $bitmap.Dispose() } catch {}
+
+        $woerter = New-Object System.Collections.Generic.List[string]
+        $x = New-Object System.Collections.Generic.List[double]
+        $y = New-Object System.Collections.Generic.List[double]
+        $w = New-Object System.Collections.Generic.List[double]
+        $h = New-Object System.Collections.Generic.List[double]
+        $zeilen = New-Object System.Collections.Generic.List[string]
+        foreach ($zeile in $ergebnis.Lines) {
+            [void]$zeilen.Add($zeile.Text)
+            foreach ($wort in $zeile.Words) {
+                $r = $wort.BoundingRect
+                [void]$woerter.Add($wort.Text)
+                [void]$x.Add($r.X / $faktor)
+                [void]$y.Add($r.Y / $faktor)
+                [void]$w.Add($r.Width / $faktor)
+                [void]$h.Add($r.Height / $faktor)
+            }
+        }
+        return [PSCustomObject]@{
+            Text    = ($zeilen -join "`r`n")
+            Woerter = $woerter.ToArray()
+            X = $x.ToArray(); Y = $y.ToArray(); W = $w.ToArray(); H = $h.ToArray()
+        }
+    } catch {
+        Schreibe-Log "HINWEIS: Texterkennung fehlgeschlagen: $($_.Exception.Message)"
+        return $null
+    } finally {
+        if ($stream) { try { $stream.Dispose() } catch {} }
+        Remove-Item -Path $ocrDatei -Force -ErrorAction SilentlyContinue
+    }
+}
+
+# Datei, in der der erkannte Text eines gescannten Dokuments bis zur
+# Erfassung aufgehoben wird (dann muss fuer den Namensvorschlag nicht noch
+# einmal erkannt werden)
+function Get-OcrTextDatei($pdfName) {
+    return (Join-Path $ScanTempOrdner ("Text_" + [System.IO.Path]::GetFileNameWithoutExtension($pdfName) + ".txt"))
+}
+
+# Erste Seite einer PDF als Bild (fuer die Vorschau und - bei Ausdrucken -
+# fuer den Namensvorschlag). Rueckgabe: Bild (System.Drawing.Bitmap) und
+# Text, oder $null.
+function Erzeuge-Vorschau($pdfPfad) {
+    if (-not $VorschauAktiv -and -not $OcrAktiv) { return $null }
+    $ergebnis = [PSCustomObject]@{ Bild = $null; Text = "" }
+    $textDatei = Get-OcrTextDatei ([System.IO.Path]::GetFileName($pdfPfad))
+    if (Test-Path $textDatei) {
+        try { $ergebnis.Text = [System.IO.File]::ReadAllText($textDatei) } catch {}
+    }
+    if (-not (Initialisiere-WinRT)) { return $ergebnis }
+    $kennung = [guid]::NewGuid().ToString("N")
+    $kopie = Join-Path $ScanTempOrdner ("Vorschau_" + $kennung + ".pdf")
+    $png = Join-Path $ScanTempOrdner ("Vorschau_" + $kennung + ".png")
+    $mem = $null; $seite = $null; $netz = $null
+    try {
+        # Kopie, damit die eigentliche Datei nicht gesperrt bleibt
+        Copy-Item -Path $pdfPfad -Destination $kopie -Force -ErrorAction Stop
+        $datei = Warte-WinRT ([Windows.Storage.StorageFile]::GetFileFromPathAsync($kopie)) ([Windows.Storage.StorageFile])
+        $dok = Warte-WinRT ([Windows.Data.Pdf.PdfDocument]::LoadFromFileAsync($datei)) ([Windows.Data.Pdf.PdfDocument])
+        if ($dok.PageCount -lt 1) { return $ergebnis }
+        $seite = $dok.GetPage(0)
+        $mem = New-Object Windows.Storage.Streams.InMemoryRandomAccessStream
+        $opt = New-Object Windows.Data.Pdf.PdfPageRenderOptions
+        $opt.DestinationWidth = 1240   # etwa 150 dpi bei A4 - reicht fuer Vorschau und Texterkennung
+        Warte-WinRTAktion ($seite.RenderToStreamAsync($mem, $opt))
+        $mem.Seek(0)
+        $netz = [System.IO.WindowsRuntimeStreamExtensions]::AsStreamForRead($mem)
+        $fs = [System.IO.File]::Create($png)
+        try { $netz.CopyTo($fs) } finally { $fs.Close() }
+
+        # Bild in den Speicher laden, damit die Datei sofort geloescht werden kann
+        $bytes = [System.IO.File]::ReadAllBytes($png)
+        $ms = New-Object System.IO.MemoryStream(,$bytes)
+        $tmp = [System.Drawing.Image]::FromStream($ms)
+        $ergebnis.Bild = New-Object System.Drawing.Bitmap $tmp
+        $tmp.Dispose(); $ms.Dispose()
+
+        if (-not $ergebnis.Text -and $OcrAktiv) {
+            $erkannt = Erkenne-Text $png
+            if ($erkannt) { $ergebnis.Text = $erkannt.Text }
+        }
+    } catch {
+        Schreibe-Log "HINWEIS: Vorschau fuer '$([System.IO.Path]::GetFileName($pdfPfad))' nicht moeglich: $($_.Exception.Message)"
+    } finally {
+        if ($netz) { try { $netz.Dispose() } catch {} }
+        if ($seite) { try { $seite.Dispose() } catch {} }
+        if ($mem) { try { $mem.Dispose() } catch {} }
+        Remove-Item -Path $kopie, $png -Force -ErrorAction SilentlyContinue
+    }
+    if (-not $VorschauAktiv -and $ergebnis.Bild) { $ergebnis.Bild.Dispose(); $ergebnis.Bild = $null }
+    return $ergebnis
+}
+
+# Sucht unter den schon einmal verwendeten Bezeichnungen die laengste, die im
+# erkannten Text vorkommt (z.B. ein Kundenname im Briefkopf).
+function Finde-Bezeichnungsvorschlag($text) {
+    if ([string]::IsNullOrWhiteSpace($text)) { return "" }
+    $norm = " " + (($text -replace '\s+', ' ').ToLowerInvariant()) + " "
+    $bester = ""
+    foreach ($b in (Lese-Bezeichnungen)) {
+        $kandidat = ("$b".Trim() -replace '\s+', ' ')
+        if ($kandidat.Length -lt 4 -or $kandidat.Length -le $bester.Length) { continue }
+        if ($kandidat -ieq "Scan" -or $kandidat -ieq "Kassenabschluss") { continue }
+        if ($norm.Contains($kandidat.ToLowerInvariant())) { $bester = $kandidat }
+    }
+    return $bester
+}
+
+function Zeige-Erfassungsdialog($dateiname, $dateipfad, $vorschau) {
     $form = New-Object System.Windows.Forms.Form
     $form.Text = "Dokument erfassen - $dateiname ($StandortName)"
-    $form.Size = New-Object System.Drawing.Size(480, 340)
+    $mitBild = ($null -ne $vorschau -and $null -ne $vorschau.Bild)
+    $form.Size = New-Object System.Drawing.Size($(if ($mitBild) { 730 } else { 480 }), 340)
     $form.StartPosition = "CenterScreen"
     $form.FormBorderStyle = "FixedDialog"
     $form.MaximizeBox = $false
@@ -648,6 +953,19 @@ function Zeige-Erfassungsdialog($dateiname, $dateipfad) {
         } catch {}
     }
     $form.Controls.Add($txtKunde)
+    # Vorschlag aus der Texterkennung: ein schon bekannter Name, der im
+    # Dokument vorkommt - markiert, damit Tippen ihn sofort ersetzt
+    $vorschlag = ""
+    if ($null -ne $vorschau) { $vorschlag = Finde-Bezeichnungsvorschlag $vorschau.Text }
+    if ($vorschlag) {
+        $txtKunde.Text = $vorschlag
+        $txtKunde.BackColor = [System.Drawing.Color]::LightYellow
+        if (-not $tip) { $tip = New-Object System.Windows.Forms.ToolTip }
+        $tip.SetToolTip($txtKunde, "Vorschlag aus dem Dokument erkannt - bitte pruefen")
+        $txtKunde.Add_TextChanged({ $txtKunde.BackColor = [System.Drawing.SystemColors]::Window })
+        $form.Add_Shown({ $txtKunde.Focus(); $txtKunde.SelectAll() })
+        Schreibe-Log "Namensvorschlag aus Texterkennung: '$vorschlag'"
+    }
     $y += 35
 
     $lblDatum = New-Object System.Windows.Forms.Label
@@ -689,6 +1007,22 @@ function Zeige-Erfassungsdialog($dateiname, $dateipfad) {
         }
     })
     $form.Controls.Add($btnAnsehen)
+
+    # Vorschau der ersten Seite (Klick = Dokument ansehen)
+    if ($mitBild) {
+        $bild = New-Object System.Windows.Forms.PictureBox
+        $bild.Location = New-Object System.Drawing.Point(470, 10)
+        $bild.Size = New-Object System.Drawing.Size(235, 280)
+        $bild.SizeMode = [System.Windows.Forms.PictureBoxSizeMode]::Zoom
+        $bild.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
+        $bild.BackColor = [System.Drawing.Color]::White
+        $bild.Cursor = [System.Windows.Forms.Cursors]::Hand
+        $bild.Image = $vorschau.Bild
+        if (-not $tip) { $tip = New-Object System.Windows.Forms.ToolTip }
+        $tip.SetToolTip($bild, "Erste Seite - Klicken zum Ansehen des ganzen Dokuments")
+        $bild.Add_Click({ $btnAnsehen.PerformClick() })
+        $form.Controls.Add($bild)
+    }
 
     $btnCancel = New-Object System.Windows.Forms.Button
     $btnCancel.Text = "Ueberspringen"
@@ -1178,6 +1512,7 @@ function Speichere-ScannerEinstellungen($anzeige, $optionen) {
             Farbe       = $optionen.Farbe
             Dpi         = [int]$optionen.Dpi
             LeereSeiten = [bool]$optionen.LeereSeiten
+            Trennen     = [bool]$optionen.Trennen
         }
         $alle | ConvertTo-Json -Depth 3 | Set-Content -Path $script:ScannerEinstellungenDatei -Encoding UTF8 -Force
     } catch {
@@ -1227,7 +1562,7 @@ function Zeige-ScanOptionenDialog($scannerEintraege, $vorauswahlAnzeige) {
 
     $form = New-Object System.Windows.Forms.Form
     $form.Text = "Scan-Optionen"
-    $form.ClientSize = New-Object System.Drawing.Size(400, 325)
+    $form.ClientSize = New-Object System.Drawing.Size(400, 350)
     $form.StartPosition = "CenterScreen"
     $form.FormBorderStyle = "FixedDialog"
     $form.MaximizeBox = $false
@@ -1331,6 +1666,15 @@ function Zeige-ScanOptionenDialog($scannerEintraege, $vorauswahlAnzeige) {
     $chkLeer.AutoSize = $true
     $form.Controls.Add($chkLeer)
 
+    # Stapel trennen: zwischen die Dokumente jeweils ein leeres Blatt legen
+    $chkTrennen = New-Object System.Windows.Forms.CheckBox
+    $chkTrennen.Text = "Stapel an leeren Blaettern in Dokumente trennen"
+    $chkTrennen.Location = New-Object System.Drawing.Point(110, 263)
+    $chkTrennen.AutoSize = $true
+    $form.Controls.Add($chkTrennen)
+    $tipTrennen = New-Object System.Windows.Forms.ToolTip
+    $tipTrennen.SetToolTip($chkTrennen, "Mehrere Dokumente auf einmal einlegen, dazwischen jeweils ein leeres Blatt.`nJedes Dokument wird einzeln abgelegt und abgefragt; die leeren Blaetter fallen weg.")
+
     $aktualisiereDuplex = {
         $idx = $cmbScanner.SelectedIndex
         $duplexMoeglich = $true
@@ -1342,6 +1686,7 @@ function Zeige-ScanOptionenDialog($scannerEintraege, $vorauswahlAnzeige) {
         }
         $chkDuplex.Enabled = ($radEinzug.Checked -and $radEinzug.Enabled -and $duplexMoeglich)
         if (-not $duplexMoeglich) { $chkDuplex.Checked = $false }
+        $chkTrennen.Enabled = ($radEinzug.Checked -and $radEinzug.Enabled)
     }
 
     # Bei Scannerwechsel: Hinweiszeile, Einzug/Duplex-Verfuegbarkeit und die
@@ -1359,7 +1704,7 @@ function Zeige-ScanOptionenDialog($scannerEintraege, $vorauswahlAnzeige) {
         }
 
         $quelle = "Einzug"; $duplex = $DuplexStandard; $farbe = $ScanFarbmodus
-        $dpi = $ScanStandardDpi; $leer = $LeereSeitenEntfernen
+        $dpi = $ScanStandardDpi; $leer = $LeereSeitenEntfernen; $trennen = $false
         if ($gemerkt.ContainsKey($e.Anzeige)) {
             $g = $gemerkt[$e.Anzeige]
             if ($g.Quelle) { $quelle = $g.Quelle }
@@ -1367,6 +1712,7 @@ function Zeige-ScanOptionenDialog($scannerEintraege, $vorauswahlAnzeige) {
             if ($g.Farbe) { $farbe = $g.Farbe }
             if ($g.Dpi) { $dpi = [int]$g.Dpi }
             if ($null -ne $g.LeereSeiten) { $leer = [bool]$g.LeereSeiten }
+            if ($null -ne $g.Trennen) { $trennen = [bool]$g.Trennen }
         }
 
         $einzugMoeglich = $true
@@ -1388,6 +1734,7 @@ function Zeige-ScanOptionenDialog($scannerEintraege, $vorauswahlAnzeige) {
         }
         $cmbQualitaet.SelectedIndex = $bester
         $chkLeer.Checked = $leer
+        $chkTrennen.Checked = $trennen
         & $aktualisiereDuplex
     }
     $cmbScanner.Add_SelectedIndexChanged($aktualisiere)
@@ -1398,7 +1745,7 @@ function Zeige-ScanOptionenDialog($scannerEintraege, $vorauswahlAnzeige) {
     $btnOK = New-Object System.Windows.Forms.Button
     $btnOK.Text = "Scannen"
     $btnOK.Size = New-Object System.Drawing.Size(110, 32)
-    $btnOK.Location = New-Object System.Drawing.Point(155, 278)
+    $btnOK.Location = New-Object System.Drawing.Point(155, 303)
     $btnOK.DialogResult = [System.Windows.Forms.DialogResult]::OK
     $btnOK.Add_Click({
         $e = $scannerEintraege[$cmbScanner.SelectedIndex]
@@ -1416,7 +1763,7 @@ function Zeige-ScanOptionenDialog($scannerEintraege, $vorauswahlAnzeige) {
     $btnAbbrechen = New-Object System.Windows.Forms.Button
     $btnAbbrechen.Text = "Abbrechen"
     $btnAbbrechen.Size = New-Object System.Drawing.Size(110, 32)
-    $btnAbbrechen.Location = New-Object System.Drawing.Point(275, 278)
+    $btnAbbrechen.Location = New-Object System.Drawing.Point(275, 303)
     $btnAbbrechen.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
     $form.Controls.Add($btnAbbrechen)
 
@@ -1434,6 +1781,7 @@ function Zeige-ScanOptionenDialog($scannerEintraege, $vorauswahlAnzeige) {
         Farbe       = $farbWerte[$cmbFarbe.SelectedIndex]
         Dpi         = $dpiWerte[$cmbQualitaet.SelectedIndex]
         LeereSeiten = $chkLeer.Checked
+        Trennen     = ($istEinzug -and $chkTrennen.Checked)
     }
 }
 
@@ -1708,6 +2056,44 @@ function Entferne-LeereSeiten($seitenDateien) {
     return ,$behalten
 }
 
+# Teilt einen Stapel an leeren Blaettern in mehrere Dokumente. Bei
+# beidseitigem Scan zaehlt ein Blatt nur als Trennblatt, wenn Vorder- UND
+# Rueckseite leer sind; leere Rueckseiten innerhalb eines Dokuments fallen
+# weg. Rueckgabe: Liste von Seitenlisten (eine pro Dokument).
+function Teile-Stapel($seitenDateien, $duplex) {
+    $dateien = @($seitenDateien)
+    $leer = New-Object System.Collections.Generic.List[bool]
+    $nr = 0
+    foreach ($f in $dateien) {
+        $nr++
+        $anteil = 100.0
+        try { $anteil = [PpeBild]::DunkelAnteil($f) } catch { Schreibe-Log "Trennblatt-Pruefung Seite ${nr} fehlgeschlagen: $($_.Exception.Message)" }
+        [void]$leer.Add($anteil -lt [double]$LeereSeiteSchwelle)
+    }
+    $schritt = if ($duplex) { 2 } else { 1 }
+    $gruppen = New-Object System.Collections.Generic.List[object]
+    $aktuell = New-Object System.Collections.Generic.List[string]
+    for ($i = 0; $i -lt $dateien.Count; $i += $schritt) {
+        $ende = [Math]::Min($i + $schritt, $dateien.Count) - 1
+        $blattLeer = $true
+        for ($j = $i; $j -le $ende; $j++) { if (-not $leer[$j]) { $blattLeer = $false } }
+        if ($blattLeer) {
+            if ($aktuell.Count -gt 0) { [void]$gruppen.Add($aktuell); $aktuell = New-Object System.Collections.Generic.List[string] }
+            continue
+        }
+        for ($j = $i; $j -le $ende; $j++) { if (-not $leer[$j]) { [void]$aktuell.Add($dateien[$j]) } }
+    }
+    if ($aktuell.Count -gt 0) { [void]$gruppen.Add($aktuell) }
+    if ($gruppen.Count -eq 0) {
+        Schreibe-Log "Stapel trennen: alle Seiten wirken leer - es wird zur Sicherheit EIN Dokument mit allen Seiten abgelegt."
+        $alle = New-Object System.Collections.Generic.List[string]
+        foreach ($f in $dateien) { [void]$alle.Add($f) }
+        [void]$gruppen.Add($alle)
+    }
+    Schreibe-Log ("Stapel trennen: {0} Seite(n) -> {1} Dokument(e) ({2})" -f $dateien.Count, $gruppen.Count, (($gruppen | ForEach-Object { "$($_.Count) S." }) -join ", "))
+    return ,$gruppen
+}
+
 # Erzeugt aus den Seitenbildern EINE PDF und legt sie im Ablage-Ordner ab,
 # wo der Watcher sie wie einen normalen Ausdruck erkennt. Die PDF wird erst
 # unter einem anderen Namen fertig geschrieben und dann umbenannt, damit der
@@ -1719,8 +2105,13 @@ function Erzeuge-ScanPdf($seitenDateien, $dpiX, $dpiY, $schwarzweiss) {
     $hoehe  = New-Object System.Collections.Generic.List[int]
     $dx     = New-Object System.Collections.Generic.List[double]
     $dy     = New-Object System.Collections.Generic.List[double]
+    $texte  = New-Object System.Collections.Generic.List[string]
+    $gesamtText = New-Object System.Text.StringBuilder
+    $mitOcr = Initialisiere-Ocr
+    $seitenNr = 0
 
     foreach ($f in $seitenDateien) {
+        $seitenNr++
         # Bei "Schwarzweiss" echte 1-Bit-Seiten erzeugen - auch wenn der Scanner
         # (z.B. eSCL-Treiber) in Graustufen geliefert hat. Klappt das nicht,
         # wird die Seite wie bisher als JPEG uebernommen.
@@ -1746,15 +2137,35 @@ function Erzeuge-ScanPdf($seitenDateien, $dpiX, $dpiY, $schwarzweiss) {
         [void]$hoehe.Add($seite.Hoehe)
         [void]$dx.Add($x)
         [void]$dy.Add($y)
+
+        # Texterkennung: unsichtbarer Text ueber dem Scan (durchsuchbare PDF)
+        $ebene = $null
+        if ($mitOcr) {
+            $erkannt = Erkenne-Text $f
+            if ($erkannt -and $erkannt.Woerter.Count -gt 0) {
+                try {
+                    $ebene = [PpePdf]::TextEbene([string[]]$erkannt.Woerter, [double[]]$erkannt.X, [double[]]$erkannt.Y, [double[]]$erkannt.W, [double[]]$erkannt.H, $x, $y, [int]$seite.Hoehe)
+                } catch { Schreibe-Log "HINWEIS: Textebene Seite $seitenNr nicht erzeugt: $($_.Exception.Message)" }
+                [void]$gesamtText.AppendLine($erkannt.Text)
+            }
+        }
+        [void]$texte.Add($ebene)
     }
 
     $basis = "Scan_$(Get-Date -Format 'yyyyMMdd_HHmmss')"
+    if ([int]$script:ScanTeilNr -gt 0) { $basis += "_Teil$($script:ScanTeilNr)" }
     $tempPdf = Join-Path $ScanTempOrdner "$basis.pdf.tmp"
-    [PpePdf]::Schreibe($tempPdf, $jpegs.ToArray(), $breite.ToArray(), $hoehe.ToArray(), $dx.ToArray(), $dy.ToArray(), $sw.ToArray())
+    [PpePdf]::Schreibe($tempPdf, $jpegs.ToArray(), $breite.ToArray(), $hoehe.ToArray(), $dx.ToArray(), $dy.ToArray(), $sw.ToArray(), $texte.ToArray())
     $zielPdf = Get-EindeutigerZielpfad $WatchFolder $basis "pdf"
+    # Erkannten Text VOR dem Verschieben ablegen - sobald die PDF im
+    # Ablage-Ordner liegt, kann der Watcher sie schon abfragen
+    if ($gesamtText.Length -gt 0) {
+        try { [System.IO.File]::WriteAllText((Get-OcrTextDatei ([System.IO.Path]::GetFileName($zielPdf))), $gesamtText.ToString()) } catch {}
+    }
     Move-Item -Path $tempPdf -Destination $zielPdf -Force
     $groesseKB = [Math]::Round((Get-Item $zielPdf).Length / 1KB)
-    Schreibe-Log "PDF erzeugt: $zielPdf ($($jpegs.Count) Seite(n), $groesseKB KB)"
+    $ocrHinweis = if ($gesamtText.Length -gt 0) { ", durchsuchbar" } else { "" }
+    Schreibe-Log "PDF erzeugt: $zielPdf ($($jpegs.Count) Seite(n), $groesseKB KB$ocrHinweis)"
     return $zielPdf
 }
 
@@ -1838,16 +2249,29 @@ function Starte-Scan {
             return
         }
 
-        if ($optionen.LeereSeiten -and $seitenDateien.Count -gt 1) {
-            $seitenDateien = Entferne-LeereSeiten $seitenDateien
+        Schreibe-Log "Scan abgeschlossen ($($seitenDateien.Count) Seite(n), Quelle: $($optionen.Quelle), Duplex: $($optionen.Duplex), $($optionen.Dpi) dpi, $($optionen.Farbe), Stapel trennen: $([bool]$optionen.Trennen))."
+        if ($optionen.Trennen -and $seitenDateien.Count -gt 1) {
+            # Leere Blaetter sind hier Trennblaetter - sie fallen beim Teilen weg
+            $gruppen = Teile-Stapel $seitenDateien $optionen.Duplex
+        } else {
+            if ($optionen.LeereSeiten -and $seitenDateien.Count -gt 1) {
+                $seitenDateien = Entferne-LeereSeiten $seitenDateien
+            }
+            $gruppen = New-Object System.Collections.Generic.List[object]
+            [void]$gruppen.Add($seitenDateien)
         }
 
-        Schreibe-Log "Scan abgeschlossen ($($seitenDateien.Count) Seite(n), Quelle: $($optionen.Quelle), Duplex: $($optionen.Duplex), $($optionen.Dpi) dpi, $($optionen.Farbe))."
         $script:LetzteScanFarbe = $optionen.Farbe
         try {
-            Lege-ScanAb $seitenDateien $script:LetzteScanDpiX $script:LetzteScanDpiY "Jetzt scannen"
+            $teil = 0
+            foreach ($gruppe in $gruppen) {
+                $teil++
+                $script:ScanTeilNr = if ($gruppen.Count -gt 1) { $teil } else { 0 }
+                Lege-ScanAb $gruppe $script:LetzteScanDpiX $script:LetzteScanDpiY "Jetzt scannen"
+            }
         } finally {
             $script:LetzteScanFarbe = ""
+            $script:ScanTeilNr = 0
         }
     } catch {
         Schreibe-Log "FEHLER beim Scannen: $_"
@@ -2086,7 +2510,13 @@ function Verarbeite-Ablage {
                 $versuche++
             }
 
-            $eingabe = Zeige-Erfassungsdialog $datei.Name $datei.FullName
+            $vorschau = $null
+            try { $vorschau = Erzeuge-Vorschau $datei.FullName } catch { Schreibe-Log "HINWEIS: Vorschau fehlgeschlagen: $($_.Exception.Message)" }
+            try {
+                $eingabe = Zeige-Erfassungsdialog $datei.Name $datei.FullName $vorschau
+            } finally {
+                if ($vorschau -and $vorschau.Bild) { try { $vorschau.Bild.Dispose() } catch {} }
+            }
 
             if ($null -eq $eingabe) {
                 # Zurueckstellen statt liegenlassen: in den Uebersprungen-
@@ -2158,6 +2588,7 @@ function Verarbeite-Ablage {
             try {
                 Move-Item -Path $datei.FullName -Destination $zielpfad -Force
                 Schreibe-Log "Abgelegt ($($eingabe.Ziel)): $zielpfad"
+                Remove-Item -Path (Get-OcrTextDatei $datei.Name) -Force -ErrorAction SilentlyContinue
                 # Hinweis: Seit Einfuehrung von Ermittle-DateiSchluessel (Pfad +
                 # Aenderungszeit + Groesse statt nur Pfad) ist es unproblematisch,
                 # auch hier zu vermerken - ein neuer Druckauftrag unter demselben
@@ -2266,6 +2697,16 @@ $menu.Add_Opening({
     $n = @(Get-ChildItem -Path $UebersprungenOrdner -Filter "*.pdf" -File -ErrorAction SilentlyContinue).Count
     $menuUebersprungen.Text = "Uebersprungene Dokumente erfassen ($n)"
     $menuUebersprungen.Enabled = ($n -gt 0)
+    $vorherPfad = Join-Path (Split-Path $script:EigenerPfad) "Watcher_vorher.ps1"
+    if (Test-Path $vorherPfad) {
+        $vt = "?"
+        try { $vt = Ermittle-VersionText (Lese-Text $vorherPfad) } catch {}
+        $menuZurueck.Text = "Vorherige Version wiederherstellen ($vt)"
+        $menuZurueck.Enabled = $true
+    } else {
+        $menuZurueck.Text = "Vorherige Version wiederherstellen (keine vorhanden)"
+        $menuZurueck.Enabled = $false
+    }
 })
 [void]$menu.Items.Add("-")
 $menuInfo = $menu.Items.Add("Status: Log-Datei oeffnen")
@@ -2274,6 +2715,11 @@ $menuUpdate = $menu.Items.Add("Nach Updates suchen")
 $menuUpdate.Add_Click({
     $timer.Stop()
     try { Pruefe-AufUpdate $true } finally { if (-not $script:WirdBeendet) { try { $timer.Start() } catch {} } }
+})
+$menuZurueck = $menu.Items.Add("Vorherige Version wiederherstellen")
+$menuZurueck.Add_Click({
+    $timer.Stop()
+    try { Stelle-VorherigeVersionHer } finally { if (-not $script:WirdBeendet) { try { $timer.Start() } catch {} } }
 })
 [void]$menu.Items.Add("-")
 $menuUeber = $menu.Items.Add("Ueber DiNo1 Druck && Scan")
@@ -2295,6 +2741,9 @@ $menuBeenden.Add_Click({
     [System.Windows.Forms.Application]::Exit()
 })
 $trayIcon.ContextMenuStrip = $menu
+$trayIcon.Add_BalloonTipClicked({
+    if ($script:WarnungOrdner -and (Test-Path $script:WarnungOrdner)) { Start-Process -FilePath "explorer.exe" -ArgumentList "`"$($script:WarnungOrdner)`"" }
+})
 
 $trayIcon.Add_DoubleClick({
     $timer.Stop()
@@ -2315,6 +2764,10 @@ $script:EigenerPfad = $PSCommandPath
 $script:UpdateZaehler = 0
 $script:UpdateAlleTicks = 200          # bei 3 s Pruefintervall: ca. alle 10 Minuten
 $script:AbgelehnteUpdateKennung = ""
+# Nach "Vorherige Version wiederherstellen" steht hier der Programmstand, der
+# NICHT automatisch wieder installiert werden soll (bis "Nach Updates suchen"
+# von Hand gewaehlt wird oder eine andere neue Version erscheint)
+$script:UpdateSperrDatei = Join-Path (Split-Path $script:EigenerPfad) "UpdateGesperrt.txt"
 # Marken zusammengesetzt, damit sie nicht woertlich in diesem Code stehen
 # (sonst wuerde die Suche hier statt am echten Abschnitt fuendig)
 $script:KonfigStartMarke = '# ======================= ' + 'KONFIGURATION =======================' 
@@ -2436,6 +2889,11 @@ function Pruefe-AufUpdate([bool]$manuell) {
         return
     }
     if ($neuKennung -eq $script:AbgelehnteUpdateKennung -and -not $manuell) { return }
+    if (-not $manuell -and (Test-Path $script:UpdateSperrDatei)) {
+        $gesperrt = ""
+        try { $gesperrt = (Lese-Text $script:UpdateSperrDatei).Trim() } catch {}
+        if ($gesperrt -eq $neuKennung) { return }   # bewusst zurueckgestellt
+    }
 
     # Neuer Programmcode + Konfiguration DIESES PCs
     $neuerInhalt = $neuTeile.Kopf + $eigenTeile.Konfig + $neuTeile.Code
@@ -2453,6 +2911,7 @@ function Pruefe-AufUpdate([bool]$manuell) {
         $sicherung = Join-Path (Split-Path $script:EigenerPfad) "Watcher_vorher.ps1"
         Copy-Item -Path $script:EigenerPfad -Destination $sicherung -Force
         Set-Content -Path $script:EigenerPfad -Value $neuerInhalt -Encoding UTF8 -Force
+        Remove-Item -Path $script:UpdateSperrDatei -Force -ErrorAction SilentlyContinue
     } catch {
         $script:AbgelehnteUpdateKennung = $neuKennung
         & $melde "Update auf $neuVersion ($neuKennung) konnte nicht gespeichert werden: $($_.Exception.Message)" ([System.Windows.Forms.MessageBoxIcon]::Error)
@@ -2461,6 +2920,69 @@ function Pruefe-AufUpdate([bool]$manuell) {
 
     Schreibe-Log "Update: $($script:EigeneVersionText) ($($script:EigeneCodeKennung)) -> $neuVersion ($neuKennung) uebernommen (Sicherung: $sicherung). Watcher startet neu."
     if ($manuell) { [System.Windows.Forms.MessageBox]::Show("Update auf $neuVersion wurde installiert.`n`nDer Watcher startet jetzt neu.", "DiNo1 Druck & Scan Update", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null }
+    Starte-WatcherNeu
+}
+
+# Macht das letzte Update rueckgaengig: Programmcode aus Watcher_vorher.ps1
+# mit der Konfiguration DIESES PCs. Die bisherige Version wird zur neuen
+# "vorherigen" (so kann man auch wieder vor), und sie wird nicht sofort
+# automatisch wieder installiert.
+function Stelle-VorherigeVersionHer {
+    $vorherPfad = Join-Path (Split-Path $script:EigenerPfad) "Watcher_vorher.ps1"
+    if (-not (Test-Path $vorherPfad)) {
+        [System.Windows.Forms.MessageBox]::Show("Es ist keine vorherige Version vorhanden (sie entsteht erst bei einem Update).", "Vorherige Version") | Out-Null
+        return
+    }
+    try {
+        $vorherText = Lese-Text $vorherPfad
+        $aktuellText = Lese-Text $script:EigenerPfad
+    } catch {
+        [System.Windows.Forms.MessageBox]::Show("Dateien konnten nicht gelesen werden: $($_.Exception.Message)", "Vorherige Version") | Out-Null
+        return
+    }
+    $vorherTeile = Teile-WatcherText $vorherText
+    $aktuellTeile = Teile-WatcherText $aktuellText
+    if (-not $vorherTeile -or -not $aktuellTeile) {
+        [System.Windows.Forms.MessageBox]::Show("Abschnitt KONFIGURATION nicht gefunden - Wiederherstellen nicht moeglich.", "Vorherige Version") | Out-Null
+        return
+    }
+    $vorherVersion = Ermittle-VersionText $vorherText
+    $konfig = $aktuellTeile.Konfig
+    # Aeltere Versionen (vor 14) kennen die Update-Sperre noch nicht und
+    # wuerden sofort wieder aktualisieren - dort automatische Updates aus.
+    $kenntSperre = $vorherTeile.Code.Contains("UpdateGesperrt.txt")
+    if ($kenntSperre) {
+        $hinweis = "Die aktuelle Version wird danach nicht wieder automatisch installiert (erst wenn eine neuere erscheint oder Sie 'Nach Updates suchen' waehlen)."
+    } else {
+        $hinweis = "Diese aeltere Version kennt die Update-Sperre noch nicht - automatische Updates werden deshalb AUSGESCHALTET. Zum Wiedereinschalten Setup.cmd erneut ausfuehren."
+        $zeilen = $konfig -split "`r?`n"
+        for ($i = 0; $i -lt $zeilen.Count; $i++) {
+            if ($zeilen[$i] -match '^\$UpdateQuelle\s*=') {
+                $zeilen[$i] = '$UpdateQuelle = ""   # ausgeschaltet durch "Vorherige Version wiederherstellen" - vorher: ' + ($zeilen[$i] -replace '^\$UpdateQuelle\s*=\s*', '')
+            }
+        }
+        $konfig = $zeilen -join "`r`n"
+    }
+    $frage = "Zurueck auf ${vorherVersion}?`n`nAktuell: $($script:EigeneVersionText)`n`nDie Einstellungen dieses PCs bleiben erhalten. $hinweis`n`nDer Watcher startet danach neu."
+    $antwort = [System.Windows.Forms.MessageBox]::Show($frage, "Vorherige Version wiederherstellen", [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Question)
+    if ($antwort -ne [System.Windows.Forms.DialogResult]::Yes) { return }
+
+    $neuerInhalt = $vorherTeile.Kopf + $konfig + $vorherTeile.Code
+    $fehler = $null
+    [void][System.Management.Automation.Language.Parser]::ParseInput($neuerInhalt, [ref]$null, [ref]$fehler)
+    if ($fehler -and $fehler.Count -gt 0) {
+        [System.Windows.Forms.MessageBox]::Show("Die vorherige Version enthaelt Syntaxfehler - Wiederherstellen abgebrochen.", "Vorherige Version") | Out-Null
+        return
+    }
+    try {
+        Set-Content -Path $script:EigenerPfad -Value $neuerInhalt -Encoding UTF8 -Force
+        Set-Content -Path $vorherPfad -Value $aktuellText -Encoding UTF8 -Force
+        Set-Content -Path $script:UpdateSperrDatei -Value $script:EigeneCodeKennung -Encoding ASCII -Force
+    } catch {
+        [System.Windows.Forms.MessageBox]::Show("Wiederherstellen fehlgeschlagen: $($_.Exception.Message)", "Vorherige Version") | Out-Null
+        return
+    }
+    Schreibe-Log "Vorherige Version wiederhergestellt: $($script:EigeneVersionText) ($($script:EigeneCodeKennung)) -> $vorherVersion. Automatisches Update auf $($script:EigeneCodeKennung) gesperrt. Watcher startet neu."
     Starte-WatcherNeu
 }
 
@@ -2481,6 +3003,80 @@ function Starte-WatcherNeu {
     [System.Windows.Forms.Application]::Exit()
 }
 
+# ======================= STATUS UND WARNHINWEISE =======================
+# Alle paar Minuten: Zustand pruefen, bei Problemen einen Hinweis am
+# Tray-Symbol zeigen (jede Meldung hoechstens einmal pro Stunde) und eine
+# kleine Statusdatei in $StatusOrdner schreiben (fuer Uebersicht.cmd).
+$script:ZustandZaehler = 80         # erste Pruefung ca. 1 Minute nach dem Start (HiDrive braucht nach der Anmeldung etwas)
+$script:ZustandAlleTicks = 100        # bei 3 s Pruefintervall: ca. alle 5 Minuten
+$script:LetzteWarnung = @{}
+$script:WarnungOrdner = $null
+
+function Warne-Einmal($schluessel, $titel, $text, $ordner) {
+    $jetzt = Get-Date
+    if ($script:LetzteWarnung.ContainsKey($schluessel) -and ($jetzt - $script:LetzteWarnung[$schluessel]).TotalMinutes -lt 60) { return }
+    $script:LetzteWarnung[$schluessel] = $jetzt
+    Schreibe-Log "WARNUNG: $titel - $text"
+    $script:WarnungOrdner = $ordner
+    try { $trayIcon.ShowBalloonTip(20000, $titel, $text, [System.Windows.Forms.ToolTipIcon]::Warning) } catch {}
+}
+
+function Ermittle-Zustand {
+    $hidriveOk = [bool](Test-Path $ZielBasis -ErrorAction SilentlyContinue)
+    $nicht = @(Get-ChildItem -Path $AusweichOrdner -File -Recurse -ErrorAction SilentlyContinue)
+    $nichtAlt = @($nicht | Where-Object { $_.LastWriteTime -lt (Get-Date).AddMinutes(-30) })
+    return [PSCustomObject]@{
+        HiDriveErreichbar = $hidriveOk
+        NichtUebertragen  = $nicht.Count
+        NichtUebertragenAlt = $nichtAlt.Count
+        Uebersprungen     = @(Get-ChildItem -Path $UebersprungenOrdner -Filter "*.pdf" -File -ErrorAction SilentlyContinue).Count
+        WartendInAblage   = @(Get-ChildItem -Path $WatchFolder -Filter "*.pdf" -File -ErrorAction SilentlyContinue).Count
+    }
+}
+
+function Pruefe-Zustand {
+    $z = Ermittle-Zustand
+    if (-not $z.HiDriveErreichbar) {
+        Warne-Einmal "hidrive" "HiDrive nicht erreichbar" "'$ZielBasis' ist gerade nicht erreichbar. Dokumente werden vorerst auf diesem PC gesammelt und spaeter automatisch uebertragen." $null
+    } elseif ($z.NichtUebertragenAlt -gt 0) {
+        Warne-Einmal "nicht_uebertragen" "Dokumente nicht uebertragen" "$($z.NichtUebertragen) Dokument(e) liegen noch in '$AusweichOrdner' und konnten nicht automatisch nach HiDrive uebertragen werden. Klicken zum Oeffnen." $AusweichOrdner
+    }
+    Schreibe-Status $z
+}
+
+function Schreibe-Status($zustand) {
+    if ([string]::IsNullOrWhiteSpace($StatusOrdner) -or $StatusOrdner.Trim() -eq "-") { return }
+    try {
+        if (-not (Test-Path $StatusOrdner -ErrorAction SilentlyContinue)) {
+            $eltern = Split-Path $StatusOrdner -Parent
+            if (-not $eltern -or -not (Test-Path $eltern -ErrorAction SilentlyContinue)) { return }   # HiDrive gerade nicht da
+            New-Item -ItemType Directory -Path $StatusOrdner -Force -ErrorAction Stop | Out-Null
+        }
+        $status = [ordered]@{
+            Rechner           = $env:COMPUTERNAME
+            Benutzer          = $env:USERNAME
+            Standort          = $StandortName
+            Version           = $script:WatcherVersion
+            VersionDatum      = $script:WatcherVersionDatum
+            Programmstand     = $script:EigeneCodeKennung
+            Zeit              = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+            HiDriveErreichbar = $zustand.HiDriveErreichbar
+            NichtUebertragen  = $zustand.NichtUebertragen
+            Uebersprungen     = $zustand.Uebersprungen
+            WartendInAblage   = $zustand.WartendInAblage
+            LetzteAblage      = "$($script:LetzteAblage)"
+            LetzterFehler     = "$($script:LetzterFehler)"
+            Texterkennung     = $(if (-not $OcrAktiv) { "aus" } elseif (-not $script:OcrGeprueft) { "noch nicht benutzt" } elseif ($script:OcrEngine) { "bereit" } else { "nicht verfuegbar" })
+            UpdateQuelle      = $UpdateQuelle
+            UpdatesGesperrt   = [bool](Test-Path $script:UpdateSperrDatei)
+        }
+        $datei = Join-Path $StatusOrdner ((Sanitize-Dateiname "$($env:COMPUTERNAME)_$($env:USERNAME)") + ".json")
+        [System.IO.File]::WriteAllText($datei, ($status | ConvertTo-Json -Depth 3), (New-Object System.Text.UTF8Encoding($false)))
+    } catch {
+        Schreibe-Log "HINWEIS: Statusdatei konnte nicht geschrieben werden: $($_.Exception.Message)"
+    }
+}
+
 # ======================= HAUPTSCHLEIFE (Timer statt Dauerschleife) =======================
 # Ein WinForms-Timer wird benoetigt, damit gleichzeitig das Tray-Symbol auf
 # Klicks reagieren kann UND der Ablage-Ordner regelmaessig geprueft wird.
@@ -2493,6 +3089,10 @@ $timer.Add_Tick({
     }
     $script:UpdateZaehler++
     if ($script:WirdBeendet) { return }   # Neustart nach Update laeuft
+    if (($script:ZustandZaehler % $script:ZustandAlleTicks) -eq 0) {
+        try { Pruefe-Zustand } catch { Schreibe-Log "FEHLER bei der Zustandspruefung: $($_.Exception.Message)" }
+    }
+    $script:ZustandZaehler++
     Verarbeite-Ablage
 })
 $timer.Start()

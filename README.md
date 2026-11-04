@@ -21,3 +21,12 @@ Jeder PC prüft beim Start und etwa alle 10 Minuten, ob sich der Programmcode de
 - Der Abschnitt `KONFIGURATION` in der `Watcher.ps1` hier enthält nur Beispielwerte. Die PCs ignorieren ihn, deshalb hier **keine echten Namen oder Pfade** eintragen. Das Projekt ist öffentlich.
 - Wer in dieses Projekt schreiben darf, kann Code auf allen PCs ausführen. Schreibrechte bekommt deshalb nur die IT.
 - Neue Einstellungen brauchen einen Standardwert im Block `STANDARDWERTE FUER NEUERE EINSTELLUNGEN`, sonst fehlen sie auf automatisch aktualisierten PCs.
+
+## Funktionen ab Version 14
+
+- **Texterkennung (OCR)** mit der in Windows eingebauten Erkennung: gescannte PDFs sind durchsuchbar, bekannte Kundennamen werden im Erfassungsfenster vorgeschlagen.
+- **Vorschau** der ersten Seite im Erfassungsfenster.
+- **Stapel trennen** an leeren Blättern (Scan-Optionen, nur Einzug).
+- **Statusdatei je PC** im Status-Ordner auf HiDrive, Anzeige mit `Uebersicht.cmd`.
+- **Warnhinweis** am Tray-Symbol, wenn HiDrive nicht erreichbar ist oder Dokumente nicht übertragen wurden.
+- **Vorherige Version wiederherstellen** im Tray-Menü.

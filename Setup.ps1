@@ -228,6 +228,22 @@ $LokalerOrdner = "__LOKALERORDNER__"
 # Leer lassen = keine automatischen Updates.
 $UpdateQuelle = "__UPDATEQUELLE__"
 
+# Texterkennung (OCR, in Windows 10/11 eingebaut, arbeitet ohne Internet):
+# Gescannte PDFs werden durchsuchbar (Text suchen/markieren/kopieren), und das
+# Erfassungsfenster schlaegt einen schon einmal verwendeten Kundennamen vor,
+# wenn er im Dokument vorkommt. $false = aus.
+$OcrAktiv = $true
+
+# Kleine Vorschau der ersten Seite im Erfassungsfenster anzeigen ($false = aus)
+$VorschauAktiv = $true
+
+# Ordner, in den dieser PC alle paar Minuten eine kleine Statusdatei schreibt
+# (Version, letzte Ablage, Fehler, wartende Dateien). Uebersicht.cmd zeigt
+# daraus alle PCs auf einen Blick. Leer lassen = Ordner
+# "DiNo1-Druck-Scan-Status" neben dem Mitarbeiter-Ordner (bei X:\Mitarbeiter
+# also X:\DiNo1-Druck-Scan-Status). "-" = keine Statusdatei schreiben.
+$StatusOrdner = ""
+
 # Lokaler Ausweich-Ordner, falls HiDrive gerade nicht erreichbar ist
 # (Datei geht dann NICHT verloren, sondern liegt hier zur manuellen Pruefung)
 $AusweichOrdner = "C:\PaperPortErsatz\Nicht_uebertragen"
