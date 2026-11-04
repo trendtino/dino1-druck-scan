@@ -1,0 +1,363 @@
+PaperPort-Ersatz - Einrichtung auf einem neuen Mitarbeiter-PC
+================================================================
+Installation von Dino1 GmbH und Andre Meschke
+
+Enthaltene Dateien:
+- Setup.cmd                    -> EINFACHSTER WEG: Doppelklicken, Rest ist ein Assistent
+- Setup.ps1                    -> wird von Setup.cmd automatisch aufgerufen
+- Watcher.ps1                  -> das eigentliche Erfassungs-Skript (Vorlage/Referenz)
+- Install-PaperPortErsatz.ps1  -> nur noch fuer die manuelle/alte Methode noetig
+- ANLEITUNG.txt                -> diese Datei
+- EINSTELLUNGEN.txt            -> Uebersicht ALLER Einstellungen
+- Diagnose.cmd / Diagnose.ps1  -> Fehlersuche: erstellt einen Bericht auf dem Desktop
+
+WICHTIG: Alle Dateien muessen im selben Ordner liegen (z.B. alle auf dem
+Desktop oder in einem Ordner "C:\Setup\PaperPortErsatz\").
+
+
+SCHRITT 1: PDF24 Creator installieren (falls noch nicht geschehen)
+------------------------------------------------------
+Download: https://www.pdf24.org/de/creator
+Ganz normal installieren, keine Sonderoptionen noetig.
+
+
+SCHRITT 2: Setup.cmd ausfuehren (einmal pro PC)
+------------------------------------------------------
+Einfach per Doppelklick auf "Setup.cmd" starten.
+
+  WICHTIG: Setup.cmd immer im Konto des MITARBEITERS starten, der den
+  PaperPort-Ersatz spaeter benutzt - NICHT im Admin-Konto anmelden. Fragt
+  Windows nach einem Admin-Passwort, das Admin-Passwort dort einfach
+  eingeben: der Watcher wird trotzdem fuer den angemeldeten Mitarbeiter
+  eingerichtet (die Zusammenfassung am Ende zeigt, fuer welchen Benutzer).
+  Vorher das Archiv komplett entpacken (nicht direkt aus dem RAR starten).
+
+  - Es erscheint eine Windows-Sicherheitsabfrage ("Administrator-Rechte
+    erforderlich") - dort auf "Ja" klicken. Das ist noetig, damit das
+    Skript den Ausweich-Drucker einrichten und die geplante Aufgabe
+    anlegen kann.
+  - Danach oeffnet sich das Einrichtungsfenster mit drei Reitern (Reiter
+    oben anklicken). Alle Einstellungen sind in EINSTELLUNGEN.txt im Detail
+    beschrieben - hier das Wichtigste:
+
+    Reiter "Standort & Mitarbeiter":
+      Standortname                   -> z.B. "Ahlhorn" (nur informativ)
+      HiDrive-Basisordner Mitarbeiter -> der BASIS-Ordner auf HiDrive, der
+                                         ALLE Mitarbeiter-Ordner enthaelt
+                                         (NICHT der Ordner eines einzelnen
+                                         Mitarbeiters!), z.B. "X:\Mitarbeiter"
+      HiDrive-Ordner Shop            -> EIN gemeinsamer Ordner fuer Shop-
+                                         Dokumente, z.B. "X:\Shop"
+      HiDrive-Ordner Kasse           -> EIN gemeinsamer Ordner fuer
+                                         Kassendokumente, z.B. "X:\Kasse"
+      Mitarbeiter-Tabelle            -> pro Zeile: Anzeigename (erscheint
+                                         im Dropdown) und der bereits
+                                         vorhandene HiDrive-Ordnername
+                                         (Gross-/Kleinschreibung, Klammern
+                                         und Leerzeichen muessen GENAU
+                                         passen). Ueber die letzte, leere
+                                         Zeile werden weitere Mitarbeiter
+                                         hinzugefuegt.
+
+    Reiter "Drucker & Scanner":
+      Drucker                        -> normalerweise beide Haken (PDF24 +
+                                         Dino1 Drucker) lassen. Werden nur
+                                         noch als Ausweich fuer Scans
+                                         gebraucht (siehe SCHRITT 4).
+      Haken "Dino1 Drucker jetzt
+      automatisch einrichten"        -> angehakt lassen (siehe SCHRITT 4B)
+      Scanner-Tabelle                -> optional (siehe SCHRITT 4C). Auf
+                                         "Gefundene Scanner einlesen" klicken,
+                                         dann links einen verstaendlichen
+                                         Namen vergeben (z.B. "Buero Theke").
+                                         Leer lassen = alle gefundenen
+                                         Scanner werden angeboten.
+
+    Reiter "Scan & Erweitert":
+      Vorgaben fuer das Fenster "Scan-Optionen" (Farbe, Qualitaet, Duplex,
+      leere Seiten entfernen ...) und einige technische Werte. Die
+      Standardwerte passen fuer die meisten Standorte - einfach so lassen.
+
+  - Auf "Einrichten" klicken. Das Skript erledigt danach automatisch:
+      * Watcher.ps1 mit den obigen Werten nach C:\PaperPortErsatz schreiben
+      * "Dino1 Drucker" einrichten (falls angehakt)
+      * die geplante Aufgabe anlegen und den Watcher sofort starten
+  - Am Ende erscheint eine Zusammenfassung. Falls dort eine Warnung steht
+    (z.B. weil "Microsoft Print to PDF" auf diesem PC fehlt), bitte lesen -
+    der Rest wurde trotzdem eingerichtet.
+
+Fertig! Es bleibt nur noch SCHRITT 3 (einmalige PDF24-Einstellung).
+
+
+SCHRITT 3: PDF24 auf automatisches Speichern einstellen
+------------------------------------------------------
+Noetig fuer das DRUCKEN ueber PDF24 (das Scannen braucht PDF24 nicht mehr).
+Das kann Setup.cmd nicht automatisch setzen, da PDF24 eine fremde Software
+ist - dieser eine Schritt bleibt von Hand:
+
+PDF24 Creator oeffnen -> unten auf "Einstellungen" klicken -> Reiter
+"PDF Drucker":
+
+  1. Ganz oben bei "PDF Drucker Tool" die Option
+     "Dokumente nach dem Drucken automatisch speichern" auswaehlen
+  2. Im Abschnitt "Automatisches Speichern" als Ordner eintragen:
+     C:\PaperPortErsatz\Ablage
+  3. Haken bei "Dateinamen, unter dem gespeichert werden soll, abfragen"
+     NICHT setzen (soll leer/deaktiviert bleiben)
+  4. "Uebernehmen" und "OK" klicken
+
+
+SCHRITT 4: Testen
+------------------------------------------------------
+Variante A - Drucken:
+Ein beliebiges Dokument ausdrucken, dabei "PDF24" als Drucker waehlen.
+Es sollte KEIN Dialog erscheinen. Nach wenigen Sekunden oeffnet sich
+automatisch das Erfassungsfenster.
+
+Variante B - Scannen:
+Unten rechts in der Windows-Taskleiste (Infobereich/Systray) erscheint ein
+kleines Symbol fuer PaperPort-Ersatz. Rechtsklick darauf -> "Jetzt scannen"
+(oder Doppelklick auf das Symbol). Es erscheint das Fenster "Scan-Optionen":
+
+  Scanner      -> der zuletzt benutzte ist schon vorausgewaehlt
+  Quelle       -> Automatischer Einzug (mehrere Seiten) oder Flachbett
+  Beidseitig   -> Vorder- und Rueckseite (nur beim Einzug, nur wenn der
+                  Scanner das kann)
+  Farbe        -> Farbe / Graustufen / Schwarzweiss (kleinste Datei)
+  Qualitaet    -> 150 / 200 / 300 dpi
+  Leere Seiten -> leere Seiten (z.B. leere Rueckseiten) automatisch entfernen
+
+Was man fuer einen Scanner zuletzt gewaehlt hat, wird beim naechsten Mal
+fuer diesen Scanner wieder vorgeschlagen. Dokument einlegen, "Scannen".
+Die Seiten werden direkt als EINE PDF im Ablage-Ordner gespeichert (kein
+Drucker noetig) und danach - wie bei Variante A - erscheint automatisch das
+Erfassungsfenster. Sollte das direkte Speichern einmal nicht klappen,
+weicht das Programm automatisch auf PDF24 bzw. "Dino1 Drucker" aus.
+
+In beiden Faellen: zuerst auswaehlen, WOHIN die Datei soll (Mitarbeiter-
+Ordner / Shop-Ordner / Kasse), bei Mitarbeiter-Ordner zusaetzlich den
+Mitarbeiter und eine Bezeichnung/Kundennamen eingeben, dann "Ablegen".
+Die Datei landet umbenannt (Datum_Bezeichnung.pdf) im jeweiligen Zielordner.
+
+  "Ansehen"       -> oeffnet das Dokument im PDF-Programm, um zu pruefen,
+                     was man gerade zuordnet
+  Bezeichnung     -> beim Tippen werden zuletzt verwendete Bezeichnungen/
+                     Kundennamen vorgeschlagen
+  "Ueberspringen" -> stellt das Dokument zurueck (es geht nicht verloren).
+                     Spaeter: Rechtsklick aufs Tray-Symbol -> "Uebersprungene
+                     Dokumente erfassen (Anzahl)" - dann wird es erneut
+                     abgefragt.
+
+HINWEIS zum Scannen: Das funktioniert nur, wenn der Scanner unter Windows
+als Scan-Geraet eingerichtet ist (WIA-faehig - die meisten USB- und Netzwerk-
+Multifunktionsgeraete sind das).
+
+
+SCHRITT 4B: Was macht "Dino1 Drucker" eigentlich?
+------------------------------------------------------
+PDF24 ist manchmal nicht verfuegbar (z.B. wenn es umgeleitet ueber eine
+Remotedesktop-Verbindung genutzt wird - virtuelle Drucker fallen dabei
+gelegentlich aus der Geraeteliste raus). Der Watcher selbst achtet NUR auf
+den Ablage-Ordner - ihm ist egal, welcher Drucker die PDF dort abgelegt hat.
+
+Deshalb richtet Setup.cmd automatisch einen zweiten, in Windows bereits
+eingebauten Drucker ("Microsoft Print to PDF") auf denselben Ordner
+umgeleitet ein, als Ausweich fuer den Fall, dass PDF24 gerade mal nicht
+geht - und benennt ihn dabei in "Dino1 Drucker" um, damit er in der
+Druckauswahl klar erkennbar ist.
+
+Dieser Drucker schreibt immer in dieselbe Datei. Damit dabei nichts
+ueberschrieben wird, benennt der Watcher jeden Dino1-Ausdruck sofort nach
+dem Druck um (Druck_Datum_Uhrzeit.pdf). Man kann also auch mehrere
+Dokumente hintereinander drucken, bevor man sie erfasst. Nur zwei Drucke
+innerhalb weniger Sekunden direkt hintereinander sollte man vermeiden.
+
+
+SCHRITT 4C: Mehrere / unterschiedliche Scanner
+------------------------------------------------------
+Im Setup-Fenster (Reiter "Drucker & Scanner") gibt es die Tabelle
+"Scanner fuer 'Jetzt scannen'":
+
+  Anzeigename       -> so erscheint der Scanner spaeter im Auswahlfeld,
+                       frei waehlbar (z.B. "Buero Theke", "Lager Brother")
+  Geraetename       -> der Name, unter dem Windows den Scanner kennt - oder
+                       ein eindeutiger Teil davon (z.B. "M2070" statt
+                       "Samsung M2070 Series"). Gross-/Kleinschreibung egal.
+
+Am einfachsten: Scanner einschalten, im Setup auf "Gefundene Scanner
+einlesen" klicken - alle Scanner, die Windows kennt, werden eingetragen.
+Danach nur noch die Anzeigenamen anpassen und unnoetige Zeilen loeschen
+(Zeile markieren, Entf).
+
+Haken "Auch nicht hinterlegte, gefundene Scanner zur Auswahl anbieten":
+  an  -> im Auswahlfeld stehen zuerst die hinterlegten Scanner, darunter
+         alle weiteren, die Windows gerade findet (empfohlen)
+  aus -> nur die hinterlegten Scanner werden angeboten
+
+Ist ein hinterlegter Scanner gerade aus oder nicht erreichbar, steht er
+mit "(nicht gefunden)" in der Liste. Hat ein Scanner keinen automatischen
+Einzug bzw. kein Duplex, wird das beim ersten Scan erkannt und die Option
+danach fuer diesen Scanner ausgegraut.
+
+Wird ein Scanner gar nicht gefunden: er ist in Windows nicht als Scanner
+eingerichtet. Dann den Treiber des Herstellers (mit Scanfunktion)
+installieren. Geraete, die nur einen TWAIN-Treiber haben, lassen sich ueber
+den Menuepunkt "Mehrseiten-Scan ueber PDF24" nutzen. Diagnose.cmd zeigt im
+Bericht alle Scanner, die Windows kennt.
+
+Hinweis: Der Menuepunkt "Jetzt scannen (Scanner-Fenster ...)" nutzt die
+Auswahl von Windows selbst - bei mehreren Scannern fragt Windows dort
+eigenstaendig nach.
+
+
+SCHRITT 4D: Leere Seiten werden nicht (oder zu viel) entfernt?
+------------------------------------------------------
+Im Log (Tray-Symbol -> "Status: Log-Datei oeffnen") steht fuer jede Seite
+der gemessene Wert, z.B.
+  "Leerseiten-Pruefung Seite 2: 0.004 % dunkle Bildpunkte -> LEER"
+Eine normale Textseite hat ca. 1-8 %, ein einzelner Unterschriftsstrich
+ca. 0.05 %. Die Grenze ("Leerseiten-Schwelle", Standard 0.02) laesst sich im
+Setup, Reiter "Scan & Erweitert", anpassen:
+  - Seite mit wenig Inhalt wurde faelschlich entfernt -> Wert verkleinern
+  - leere Seite mit Flecken bleibt drin             -> Wert vergroessern
+Sind ALLE Seiten eines Scans leer, wird zur Sicherheit nichts entfernt.
+
+
+SCHRITT 5: Update auf eine neue Version (kein Neuaufbau noetig!)
+------------------------------------------------------
+Einfach "Setup.cmd" auf dem PC erneut ausfuehren (die neuen Dateien vorher
+in denselben Setup-Ordner legen bzw. die alten dort ersetzen). Das
+Eingabefenster wird automatisch mit den bisherigen Werten fuer diesen PC
+vorausgefuellt (alle drei Reiter) - einfach pruefen, ob alles noch stimmt,
+und wieder auf "Einrichten" klicken. Neue Einstellungen, die es in der
+alten Version noch nicht gab, stehen auf ihrem Standardwert.
+PDF24 selbst muss dabei NICHT neu installiert oder neu eingestellt werden.
+
+Woher werden die Werte automatisch geholt? Aus der bereits laufenden
+C:\PaperPortErsatz\Watcher.ps1 auf diesem PC. Nur wenn dort noch nichts
+eingerichtet ist, schaut Setup.ps1 hilfsweise nach einer schon angepassten
+Watcher.ps1 im selben Ordner wie Setup.cmd.
+
+
+Fehlersuche
+------------------------------------------------------
+Log-Datei mit allen Vorgaengen und eventuellen Fehlern:
+  C:\PaperPortErsatz\Log.txt
+
+Falls HiDrive beim Start nicht erreichbar war, landen Dateien
+uebergangsweise hier (nichts geht verloren):
+  C:\PaperPortErsatz\Nicht_uebertragen\
+
+Zurueckgestellte ("Ueberspringen") Dokumente:
+  C:\PaperPortErsatz\Uebersprungen\
+  (Tray-Symbol -> "Uebersprungene Dokumente erfassen")
+
+Gemerkte Werte (koennen bei Bedarf einfach geloescht werden, sie werden
+dann neu angelegt):
+  C:\PaperPortErsatz\ScannerEinstellungen.json  -> letzte Scan-Optionen je Scanner
+  C:\PaperPortErsatz\LetzterScanner.txt         -> zuletzt benutzter Scanner
+  C:\PaperPortErsatz\Bezeichnungen.txt          -> Vorschlaege beim Tippen
+
+Die Log-Datei wird ab 5 MB (einstellbar) automatisch in Log_alt.txt
+umbenannt und neu begonnen.
+
+Watcher neu starten, ohne etwas neu einzurichten (z.B. wenn er haengt):
+  Stop-ScheduledTask -TaskName "PaperPort Ersatz Watcher"
+  Get-Process powershell -ErrorAction SilentlyContinue | Stop-Process -Force
+  Start-ScheduledTask -TaskName "PaperPort Ersatz Watcher"
+
+Update auf eine neue Version: siehe SCHRITT 5 oben (Setup.cmd erneut
+ausfuehren - Standort-Einstellungen gehen dabei nicht verloren).
+
+Watcher komplett deinstallieren:
+  Stop-ScheduledTask -TaskName "PaperPort Ersatz Watcher"
+  Unregister-ScheduledTask -TaskName "PaperPort Ersatz Watcher" -Confirm:$false
+  Remove-Item "C:\PaperPortErsatz" -Recurse -Force
+(Der Drucker "Dino1 Drucker" bzw. PDF24 bleiben davon unberuehrt und
+koennen ganz normal ueber "Einstellungen -> Drucker und Scanner" entfernt
+werden, falls gewuenscht.)
+
+
+ANHANG: Manuelle Installation (alte Methode, nur noch als Referenz)
+------------------------------------------------------
+Fuer den Regelbetrieb bitte SCHRITT 1-5 oben (Setup.cmd) verwenden. Die
+folgende manuelle Methode ist nur noch als Referenz bzw. Fehlersuche
+gedacht (z.B. falls der Assistent aus irgendeinem Grund nicht startet):
+
+1. Watcher.ps1 mit dem Editor (Rechtsklick -> Bearbeiten) oeffnen und im
+   Abschnitt "KONFIGURATION" ganz oben von Hand anpassen (Standortname,
+   $ZielBasis, $MitarbeiterOrdner, $ShopOrdner, $KassenOrdner,
+   $ScanDruckerListe - siehe Kommentare direkt in der Datei).
+
+   WICHTIG: In $ScanDruckerListe NICHT einen echten "PaperPort"-
+   Druckertreiber eintragen, falls auf einem PC noch einer von der alten
+   Software vorhanden ist - der oeffnet beim Drucken sofort die alte
+   PaperPort-Software statt die Datei still im Ablage-Ordner zu speichern.
+
+2. PowerShell oeffnen, in den Ordner mit den Skripten wechseln und
+   ausfuehren:
+
+     powershell -ExecutionPolicy Bypass -File "Install-PaperPortErsatz.ps1"
+
+3. "Dino1 Drucker" von Hand einrichten (ALS ADMINISTRATOR ausfuehren):
+
+     Add-PrinterPort -Name "C:\PaperPortErsatz\Ablage\Dino1Drucker_Ausgabe.pdf"
+     Set-Printer -Name "Microsoft Print to PDF" -PortName "C:\PaperPortErsatz\Ablage\Dino1Drucker_Ausgabe.pdf"
+     Rename-Printer -Name "Microsoft Print to PDF" -NewName "Dino1 Drucker"
+
+   Zur Kontrolle:
+     Get-Printer -Name "Dino1 Drucker" | Select-Object Name, PortName
+
+   (Alternativ ueber die grafische Oberflaeche: Einstellungen -> Bluetooth
+   und Geraete -> Drucker und Scanner -> "Microsoft Print to PDF" ->
+   "Druckereigenschaften" -> Reiter "Anschluesse" -> "Anschluss
+   hinzufuegen..." -> "Local Port" -> "Neuer Anschluss..." -> vollen
+   Dateipfad eintragen; danach in "Drucker und Scanner" auf den Drucker
+   klicken -> "Umbenennen" -> "Dino1 Drucker". Das klappt aber nicht immer
+   zuverlaessig (manchmal fehlerhafte Nachfrage nach einer INF-Datei) -
+   dann lieber den PowerShell-Weg oben nutzen.)
+
+4. Update bei einer neuen Watcher.ps1-Version (manuelle Methode): den
+   Bereich zwischen "# === KONFIGURATION ===" und "# === ENDE
+   KONFIGURATION ===" aus der alten, bereits angepassten Datei in die neue
+   Watcher.ps1 uebernehmen, dann:
+
+     Stop-ScheduledTask -TaskName "PaperPort Ersatz Watcher"
+     Get-Process powershell -ErrorAction SilentlyContinue | Stop-Process -Force
+     Copy-Item ".\Watcher.ps1" "C:\PaperPortErsatz\Watcher.ps1" -Force
+     Start-ScheduledTask -TaskName "PaperPort Ersatz Watcher"
+
+   (Oder, falls sich auch Install-PaperPortErsatz.ps1 geaendert hat, dieses
+   stattdessen erneut als Administrator ausfuehren.)
+
+
+AUTOMATISCHE UPDATES (ab Paket 10)
+------------------------------------------------------
+Einmalig: Paket 10 auf jedem PC wie gewohnt per Setup.cmd installieren
+und im Feld "Update-Quelle" die Adresse der Watcher.ps1 eintragen, z.B.
+  https://raw.githubusercontent.com/<Konto>/<Projekt>/main/Watcher.ps1
+(alternativ geht auch ein Ordner, z.B. X:\PaperPortErsatz-Update).
+
+Danach fuer jedes Update NUR NOCH die geaenderte Watcher.ps1 dort
+hochladen. Jeder PC prueft beim Start und etwa alle 10 Minuten, ob sich
+der PROGRAMMCODE geaendert hat, und uebernimmt ihn dann automatisch:
+  - die Einstellungen des PCs (Abschnitt KONFIGURATION) bleiben erhalten,
+    die Beispielwerte in der hochgeladenen Datei werden ignoriert
+  - eine Datei mit Syntaxfehlern wird abgelehnt, der PC arbeitet weiter
+  - die vorherige Version liegt als C:\PaperPortErsatz\Watcher_vorher.ps1
+  - der Watcher startet sich danach selbst neu
+Sofort pruefen: Rechtsklick aufs Tray-Symbol -> "Nach Updates suchen".
+Welcher Stand laeuft, zeigt "Ueber PaperPort-Ersatz" (Programmstand) und
+die Log-Datei.
+
+WICHTIG:
+  - Wer die Datei an der Update-Quelle aendern kann, kann Code auf ALLEN
+    PCs ausfuehren. Schreibzugriff dort also nur fuer die IT.
+  - Bei einem oeffentlichen GitHub-Projekt ist die Datei fuer jeden
+    lesbar - in der hochgeladenen Watcher.ps1 deshalb im Abschnitt
+    KONFIGURATION keine echten Namen/Pfade lassen (werden ohnehin nicht
+    verwendet). Private GitHub-Projekte gehen ohne Zugangsschluessel nicht.
+  - Neue EINSTELLUNGEN (neue Variablen im Abschnitt KONFIGURATION) kommen
+    per Update nicht an - dafuer im Abschnitt "STANDARDWERTE FUER NEUERE
+    EINSTELLUNGEN" einen Standardwert eintragen oder Setup.cmd erneut
+    ausfuehren. Aenderungen an Setup.ps1 selbst werden nicht verteilt.

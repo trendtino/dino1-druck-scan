@@ -1,0 +1,228 @@
+PaperPort-Ersatz - Uebersicht ALLER Einstellungen (Paket 10)
+================================================================
+Installation von Dino1 GmbH und Andre Meschke
+
+Es gibt drei Stellen, an denen etwas eingestellt wird:
+
+  A) SETUP (Setup.cmd)          -> einmal pro PC, gilt fuer diesen PC
+  B) FENSTER "SCAN-OPTIONEN"    -> bei jedem Scan, vom Mitarbeiter
+  C) AUTOMATISCH GEMERKT        -> merkt sich das Programm selbst
+
+Alles aus A) landet in C:\PaperPortErsatz\Watcher.ps1 (Abschnitt
+KONFIGURATION, Variablenname in [eckigen Klammern]). Bitte NICHT dort von
+Hand aendern, sondern Setup.cmd erneut ausfuehren - sonst gehen Aenderungen
+beim naechsten Update verloren.
+
+
+================================================================
+A) SETUP - Reiter "Standort & Mitarbeiter"
+================================================================
+
+Standortname                          [StandortName]
+  Nur informativ (Fenstertitel, Tray-Symbol, Log). Pflichtfeld.
+
+HiDrive-Basisordner Mitarbeiter       [ZielBasis]
+  Ordner, der ALLE Mitarbeiter-Ordner enthaelt, z.B. X:\Mitarbeiter.
+  Pflichtfeld.
+
+HiDrive-Ordner Shop                   [ShopOrdner]
+  Gemeinsamer Ordner fuer Shop-Dokumente, z.B. X:\Shop. Pflichtfeld.
+
+HiDrive-Ordner Kasse                  [KassenOrdner]
+  Gemeinsamer Ordner fuer Kassenbelege, z.B. X:\Kasse. Pflichtfeld.
+  Belege werden automatisch in Monatsordner (z.B. "Oktober") sortiert -
+  nach dem Datum, das im Erfassungsfenster gewaehlt wurde.
+
+Update-Quelle (optional)              [UpdateQuelle]
+  Adresse, von der sich dieser PC automatisch aktualisiert - siehe
+  ANLEITUNG.txt, "AUTOMATISCHE UPDATES". Leer = keine Updates.
+
+Lokaler Ordner (optional)             [LokalerOrdner]
+  Ziel fuer "Nur lokal (PC)" im Erfassungsfenster - die Datei bleibt auf
+  diesem PC und wird NICHT auf HiDrive kopiert. Leer = Ordner "Scans" in
+  den Dokumenten des angemeldeten Benutzers (z.B. C:\Users\Name\Documents\Scans).
+
+Mitarbeiter-Tabelle                   [MitarbeiterOrdner]
+  Pro Zeile: Anzeigename (im Auswahlfeld) -> vorhandener HiDrive-Ordner-
+  name (muss GENAU passen). Mindestens ein Eintrag.
+
+
+================================================================
+A) SETUP - Reiter "Drucker & Scanner"
+================================================================
+
+Drucker: PDF24 / Dino1 Drucker / Weitere          [ScanDruckerListe]
+  Drucker, die still in den Ablage-Ordner speichern. Werden fuer Scans nur
+  noch gebraucht, wenn "Scans direkt als PDF" aus ist oder das direkte
+  Speichern einmal fehlschlaegt. Standard: PDF24 + Dino1 Drucker.
+  NIE einen echten "PaperPort"-Druckertreiber eintragen.
+
+'Dino1 Drucker' jetzt einrichten      (keine Variable, einmalige Aktion)
+  Richtet "Microsoft Print to PDF" als Ausweich-Drucker auf den Ablage-
+  Ordner ein und benennt ihn in "Dino1 Drucker" um. Standard: an.
+
+Scanner-Tabelle                       [ScannerListe]
+  Pro Zeile: Anzeigename (frei, z.B. "Buero Theke") -> Geraetename laut
+  Windows oder ein eindeutiger Teil davon (z.B. "M2070"). Knopf "Gefundene
+  Scanner einlesen" traegt alle Scanner ein, die Windows kennt.
+  Leer = alle gefundenen Scanner werden angeboten.
+
+Auch nicht hinterlegte Scanner anbieten   [AuchNichtHinterlegteScanner]
+  an  = hinterlegte Scanner zuerst, darunter alle weiteren gefundenen
+  aus = nur die hinterlegten. Standard: an.
+
+
+================================================================
+A) SETUP - Reiter "Scan & Erweitert"
+================================================================
+Die Werte im oberen Kasten sind nur VORGABEN fuer das Fenster "Scan-
+Optionen". Hat ein Mitarbeiter fuer einen Scanner schon einmal etwas
+gewaehlt, wird stattdessen das vorgeschlagen (siehe C).
+
+Scans direkt als PDF speichern        [ScanDirektAlsPdf]       Standard: an
+  an  = Scan wird direkt als PDF im Ablage-Ordner gespeichert (schnell,
+        klein, kein Drucker noetig). Bei einem Fehler wird automatisch auf
+        einen Drucker aus der Drucker-Liste ausgewichen.
+  aus = alter Weg: Scan wird an PDF24 / Dino1 Drucker "gedruckt".
+
+Farbe                                 [ScanFarbmodus]          Standard: Farbe
+  Farbe / Graustufen / Schwarzweiss (Text, kleinste Datei).
+
+Qualitaet                             [ScanStandardDpi]        Standard: 200
+  150 dpi (schnell, klein) / 200 dpi / 300 dpi (fein).
+
+Bildqualitaet in der PDF (30-95)      [PdfBildQualitaet]       Standard: 75
+  JPEG-Kompression der Seiten. Hoeher = schaerfer, aber groessere Datei.
+  Nur wirksam bei "Scans direkt als PDF".
+
+Duplex vorauswaehlen                  [DuplexStandard]         Standard: aus
+  Vorder- und Rueckseite beim Einzug - nur wenn der Scanner das kann.
+
+Leere Seiten entfernen vorauswaehlen  [LeereSeitenEntfernen]   Standard: an
+
+Leerseiten-Schwelle (%)               [LeereSeiteSchwelle]     Standard: 0.02
+  Seite gilt als leer, wenn weniger als dieser Anteil Bildpunkte dunkel
+  ist. Textseite ca. 1-8 %, einzelner Unterschriftsstrich ca. 0.05 %.
+  Seiten faelschlich entfernt -> kleiner; leere Seiten bleiben -> groesser.
+  Der Messwert jeder Seite steht im Log.
+
+--- Kasten "Erweitert" ---
+
+Hoechstens Blatt pro Einzug-Scan      [MaxSeitenProScan]       Standard: 40
+  Schutz vor Endlos-Scans (bei Duplex doppelt so viele Seiten).
+
+Gemerkte Bezeichnungen                [BezeichnungenMerken]    Standard: 300
+  Wie viele zuletzt eingegebene Bezeichnungen/Kundennamen beim Tippen
+  vorgeschlagen werden. 0 = Funktion aus.
+
+Ablage-Ordner pruefen alle (Sek.)     [PruefIntervall]         Standard: 3
+
+Log-Datei hoechstens (MB)             [LogMaxMB]               Standard: 5
+  Danach wird Log.txt in Log_alt.txt umbenannt und neu begonnen.
+
+Ausfuehrliches Scan-Log               [AusfuehrlichesScanLog]  Standard: aus
+  Schreibt bei jedem Scan alle technischen Scanner-Werte ins Log. Nur zur
+  Fehlersuche einschalten.
+
+
+================================================================
+B) FENSTER "SCAN-OPTIONEN" (bei jedem Scan)
+================================================================
+Tray-Symbol -> Rechtsklick -> "Jetzt scannen" (oder Doppelklick)
+
+  Scanner        Auswahl aus der Scanner-Liste; "(nicht gefunden)" = aus
+                 bzw. nicht erreichbar
+  Quelle         Automatischer Einzug / Flachbett (Flachbett fragt nach
+                 jeder Seite, ob noch eine kommt)
+  Beidseitig     Duplex - nur beim Einzug und wenn der Scanner es kann
+  Farbe          Farbe / Graustufen / Schwarzweiss
+  Qualitaet      150 / 200 / 300 dpi
+  Leere Seiten   automatisch entfernen ja/nein
+
+
+================================================================
+C) AUTOMATISCH GEMERKT (in C:\PaperPortErsatz)
+================================================================
+
+LetzterScanner.txt
+  Zuletzt benutzter Scanner -> ist beim naechsten Scan vorausgewaehlt.
+
+ScannerEinstellungen.json
+  Pro Scanner die zuletzt gewaehlten Scan-Optionen (Quelle, Duplex, Farbe,
+  Qualitaet, Leere Seiten).
+
+Bezeichnungen.txt
+  Zuletzt eingegebene Bezeichnungen/Kundennamen (Vorschlaege beim Tippen).
+
+Faehigkeiten der Scanner (Einzug ja/nein, Duplex ja/nein)
+  Werden beim ersten Scan je Scanner erkannt, solange der Watcher laeuft.
+
+Alle Dateien duerfen jederzeit geloescht werden - sie werden dann einfach
+neu angelegt.
+
+
+================================================================
+FESTE ORDNER (nicht einstellbar)
+================================================================
+
+C:\PaperPortErsatz\Ablage              Hier landen Drucke und Scans; der
+                                       Watcher prueft diesen Ordner.
+                                       (PDF24 muss hierhin speichern.)
+C:\PaperPortErsatz\Uebersprungen       Mit "Ueberspringen" zurueckgestellte
+                                       Dokumente
+C:\PaperPortErsatz\Nicht_uebertragen   Ausweich, wenn HiDrive nicht
+                                       erreichbar ist
+C:\PaperPortErsatz\ScanTemp            Zwischendateien beim Scannen (wird
+                                       automatisch aufgeraeumt)
+C:\PaperPortErsatz\Log.txt             Protokoll (Log_alt.txt = vorheriges)
+
+
+================================================================
+TRAY-MENUE (Rechtsklick auf das Symbol unten rechts)
+================================================================
+
+Jetzt scannen                         Scan mit Fenster "Scan-Optionen"
+Jetzt scannen (Scanner-Fenster ...)   Herstellerfenster des Scanners, nur
+                                      1 Seite, Windows fragt nach Scanner
+Mehrseiten-Scan ueber PDF24           fuer Scanner, die nur TWAIN koennen
+Uebersprungene Dokumente erfassen (n) holt zurueckgestellte Dokumente
+                                      zur erneuten Erfassung zurueck
+Ablage-Ordner oeffnen                 oeffnet C:\PaperPortErsatz\Ablage
+Status: Log-Datei oeffnen             Protokoll ansehen
+Ueber PaperPort-Ersatz
+Watcher beenden
+
+
+================================================================
+ERFASSUNGSFENSTER (nach jedem Druck/Scan)
+================================================================
+
+Wohin speichern?   Mitarbeiter-Ordner / Shop-Ordner / Kasse / Nur lokal (PC)
+Mitarbeiter        nur bei Mitarbeiter-Ordner
+Bezeichnung        Pflicht bei Mitarbeiter/Shop, bei Kasse optional
+                   (leer = "Kassenabschluss"); Vorschlaege beim Tippen
+Datum              bestimmt Dateinamen (Datum_Bezeichnung.pdf) und bei
+                   Kasse den Monatsordner
+Ansehen            oeffnet das Dokument im PDF-Programm
+Ablegen            verschiebt die Datei an das Ziel
+Ueberspringen      stellt das Dokument zurueck (Ordner Uebersprungen)
+
+
+================================================================
+NEU IN PAKET 8
+================================================================
+
+- Setup.ps1 enthaelt keine eigene Watcher-Kopie mehr: es nimmt die
+  mitgelieferte Watcher.ps1 (muss im selben Ordner liegen) und setzt nur
+  den Abschnitt KONFIGURATION ein. Aenderungen am Programm also nur noch
+  in Watcher.ps1.
+- Scanner-Auswahl: Herstellertreiber werden vorausgewaehlt. Die von
+  Windows automatisch angelegten Netzwerk-Eintraege (eSCL/AirScan) stehen
+  am Ende mit dem Zusatz "(Windows-Treiber, eingeschraenkt)".
+- Schwarzweiss-Scans werden als echte 1-Bit-Seiten in der PDF gespeichert
+  (kleiner, schaerfer) - auch wenn der Scanner Graustufen geliefert hat.
+  Helligkeitsgrenze: $script:SchwarzweissSchwelle = 150 in Watcher.ps1
+  (hoeher = mehr wird schwarz).
+- Dateien in C:\PaperPortErsatz\Nicht_uebertragen werden ca. alle 5
+  Minuten automatisch an ihr HiDrive-Ziel verschoben, sobald es wieder
+  erreichbar ist (steht im Log als "Nachtraeglich uebertragen").
