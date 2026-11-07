@@ -1,4 +1,4 @@
-DiNo1 Druck & Scan - Uebersicht ALLER Einstellungen (Paket 14)
+DiNo1 Druck & Scan - Uebersicht ALLER Einstellungen (Paket 15)
 ================================================================
 Installation von Dino1 GmbH und Andre Meschke
 
@@ -189,6 +189,9 @@ Jetzt scannen (Scanner-Fenster ...)   Herstellerfenster des Scanners, nur
 Mehrseiten-Scan ueber PDF24           fuer Scanner, die nur TWAIN koennen
 Uebersprungene Dokumente erfassen (n) holt zurueckgestellte Dokumente
                                       zur erneuten Erfassung zurueck
+Ordner anpassen...                    HiDrive-Ordner, Mitarbeiter, lokalen
+                                      Ordner und Standortnamen dieses PCs
+                                      aendern (ohne Setup/Admin)
 Ablage-Ordner oeffnen                 oeffnet C:\PaperPortErsatz\Ablage
 Status: Log-Datei oeffnen             Protokoll ansehen
 Nach Updates suchen                   sofort pruefen (sonst ca. alle 10 Min.)
@@ -272,3 +275,17 @@ Weitere Neuerungen:
   Zurueck auf Version 13 oder aelter schaltet die automatischen Updates
   aus (die alten Versionen kennen die Sperre nicht) - dann Setup.cmd
   erneut ausfuehren, um sie wieder einzuschalten.
+
+
+================================================================
+NEU IN PAKET 15 (Version 15)
+================================================================
+
+- Tray -> "Ordner anpassen...": Standortname, HiDrive-Ordner (Mitarbeiter,
+  Shop, Kasse), lokaler Ordner und die Mitarbeiter-Tabelle nachtraeglich
+  aendern - ohne Setup und ohne Admin-Passwort. Doppelklick auf einen
+  Ordnernamen = Ordner auf HiDrive auswaehlen. "Ordner pruefen" markiert
+  Mitarbeiter-Ordner rot, die es auf HiDrive nicht gibt. Gespeichert wird
+  im Abschnitt KONFIGURATION von C:\PaperPortErsatz\Watcher.ps1 (Sicherung:
+  Watcher_vor_Ordneraenderung.ps1); der Watcher startet danach neu.
+  Die Aenderung gilt nur fuer DIESEN PC und bleibt bei Updates erhalten.

@@ -30,3 +30,7 @@ Jeder PC prüft beim Start und etwa alle 10 Minuten, ob sich der Programmcode de
 - **Statusdatei je PC** im Status-Ordner auf HiDrive, Anzeige mit `Uebersicht.cmd`.
 - **Warnhinweis** am Tray-Symbol, wenn HiDrive nicht erreichbar ist oder Dokumente nicht übertragen wurden.
 - **Vorherige Version wiederherstellen** im Tray-Menü.
+
+## Neu in Version 15
+
+- **Ordner anpassen…** im Tray-Menü: Ordner und Mitarbeiter eines PCs nachträglich ändern, ohne Setup und ohne Admin.

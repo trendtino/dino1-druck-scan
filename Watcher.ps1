@@ -244,8 +244,8 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "14"
-$script:WatcherVersionDatum = "04.11.2026"
+$script:WatcherVersion      = "15"
+$script:WatcherVersionDatum = "07.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
 # Bei einem automatischen Update bleibt der Abschnitt KONFIGURATION dieses
@@ -2654,6 +2654,261 @@ function Erstelle-ScannerIcon {
     return [System.Drawing.Icon]::FromHandle($hIcon)
 }
 
+# ======================= ORDNER NACHTRAEGLICH ANPASSEN =======================
+# Tray -> "Ordner anpassen...": HiDrive-Ordner, Mitarbeiter-Tabelle, lokalen
+# Ordner und Standortnamen DIESES PCs aendern - ohne Setup, ohne Admin. Die
+# Werte werden im Abschnitt KONFIGURATION der eigenen Watcher.ps1 gespeichert
+# (bleiben also auch bei automatischen Updates und beim naechsten Setup
+# erhalten), danach startet der Watcher neu.
+
+# Liest einen Textwert  $Name = "..."  aus dem Konfigurationstext
+function Lese-KonfigWert($konfig, $name) {
+    $m = [regex]::Match($konfig, '(?m)^\$' + $name + '\s*=\s*"([^"]*)"')
+    if ($m.Success) { return $m.Groups[1].Value }
+    return $null
+}
+
+# Fuer einen Wert in "..." - Anfuehrungszeichen entfernen, $ und ` entschaerfen
+function Schuetze-KonfigText($text) {
+    return ("$text".Trim().Replace('"', '').Replace('`', '``').Replace('$', '`$'))
+}
+
+# Ersetzt  $Name = "..."  im Konfigurationstext (Rest der Zeile bleibt)
+function Setze-KonfigWert($konfig, $name, $wert) {
+    $m = [regex]::Match($konfig, '(?m)^\$' + $name + '\s*=\s*"[^"]*"')
+    $neu = '$' + $name + ' = "' + (Schuetze-KonfigText $wert) + '"'
+    if ($m.Success) { return $konfig.Substring(0, $m.Index) + $neu + $konfig.Substring($m.Index + $m.Length) }
+    # Fehlt die Zeile (aeltere Installation): vor dem Ende-Marker einfuegen
+    $ende = $konfig.LastIndexOf("`n# ")
+    if ($ende -lt 0) { return $konfig }
+    return $konfig.Substring(0, $ende) + "`r`n" + $neu + "`r`n" + $konfig.Substring($ende)
+}
+
+function Setze-KonfigMitarbeiter($konfig, $paare) {
+    $m = [regex]::Match($konfig, '(?s)\$MitarbeiterOrdner\s*=\s*\[ordered\]@\{.*?\n\}')
+    if (-not $m.Success) { throw "Mitarbeiter-Tabelle im Abschnitt KONFIGURATION nicht gefunden" }
+    $zeilen = New-Object System.Collections.Generic.List[string]
+    [void]$zeilen.Add('$MitarbeiterOrdner = [ordered]@{')
+    foreach ($p in $paare) { [void]$zeilen.Add('    "' + (Schuetze-KonfigText $p.Name) + '" = "' + (Schuetze-KonfigText $p.Ordner) + '"') }
+    [void]$zeilen.Add('}')
+    return $konfig.Substring(0, $m.Index) + ($zeilen -join "`r`n") + $konfig.Substring($m.Index + $m.Length)
+}
+
+function Zeige-OrdnerEinstellungen {
+    try {
+        $text = Lese-Text $script:EigenerPfad
+        $teile = Teile-WatcherText $text
+        if (-not $teile) { throw "Abschnitt KONFIGURATION nicht gefunden - bitte Setup.cmd ausfuehren." }
+    } catch {
+        [System.Windows.Forms.MessageBox]::Show("Einstellungen konnten nicht gelesen werden: $($_.Exception.Message)", "Ordner anpassen") | Out-Null
+        return
+    }
+    $konfig = $teile.Konfig
+
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = "Ordner anpassen - DiNo1 Druck & Scan"
+    $form.ClientSize = New-Object System.Drawing.Size(640, 560)
+    $form.StartPosition = "CenterScreen"
+    $form.FormBorderStyle = "FixedDialog"
+    $form.MaximizeBox = $false
+    $form.Topmost = $true
+
+    $y = 15
+    $felder = @{}
+    $neuesFeld = {
+        param($beschriftung, $name, $mitDurchsuchen)
+        $l = New-Object System.Windows.Forms.Label
+        $l.Text = $beschriftung
+        $l.Location = New-Object System.Drawing.Point(15, ($script:OrdnerY + 3))
+        $l.AutoSize = $true
+        $form.Controls.Add($l)
+        $tb = New-Object System.Windows.Forms.TextBox
+        $tb.Location = New-Object System.Drawing.Point(190, $script:OrdnerY)
+        $tb.Width = $(if ($mitDurchsuchen) { 340 } else { 435 })
+        $wert = Lese-KonfigWert $konfig $name
+        $tb.Text = $(if ($null -ne $wert) { $wert } else { "" })
+        $form.Controls.Add($tb)
+        if ($mitDurchsuchen) {
+            $b = New-Object System.Windows.Forms.Button
+            $b.Text = "Waehlen..."
+            $b.Location = New-Object System.Drawing.Point(540, ($script:OrdnerY - 1))
+            $b.Size = New-Object System.Drawing.Size(85, 24)
+            $b.Tag = $tb
+            $b.Add_Click({
+                $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
+                $feld = $this.Tag
+                if ($feld.Text -and (Test-Path $feld.Text -ErrorAction SilentlyContinue)) { $dlg.SelectedPath = $feld.Text }
+                if ($dlg.ShowDialog($form) -eq [System.Windows.Forms.DialogResult]::OK) { $feld.Text = $dlg.SelectedPath }
+            })
+            $form.Controls.Add($b)
+        }
+        $script:OrdnerY += 32
+        return $tb
+    }
+    $script:OrdnerY = $y
+    $txtStandort = & $neuesFeld "Standortname:" "StandortName" $false
+    $txtBasis    = & $neuesFeld "HiDrive Mitarbeiter-Ordner:" "ZielBasis" $true
+    $txtShop     = & $neuesFeld "HiDrive Shop-Ordner:" "ShopOrdner" $true
+    $txtKasse    = & $neuesFeld "HiDrive Kassen-Ordner:" "KassenOrdner" $true
+    $txtLokal    = & $neuesFeld "Lokaler Ordner (leer = Dokumente\Scans):" "LokalerOrdner" $true
+    $y = $script:OrdnerY + 5
+
+    $lblMA = New-Object System.Windows.Forms.Label
+    $lblMA.Text = "Mitarbeiter: Name im Auswahlfeld -> Ordnername im Mitarbeiter-Ordner (genau so wie auf HiDrive).`nNeue Zeile unten eintragen; Zeile markieren + Entf = loeschen; Doppelklick auf Ordner = auf HiDrive auswaehlen."
+    $lblMA.Location = New-Object System.Drawing.Point(15, $y)
+    $lblMA.Size = New-Object System.Drawing.Size(610, 32)
+    $form.Controls.Add($lblMA)
+    $y += 36
+
+    $grid = New-Object System.Windows.Forms.DataGridView
+    $grid.Location = New-Object System.Drawing.Point(15, $y)
+    $grid.Size = New-Object System.Drawing.Size(610, 260)
+    $grid.AllowUserToAddRows = $true
+    $grid.AllowUserToDeleteRows = $true
+    $grid.RowHeadersWidth = 30
+    $grid.AutoSizeColumnsMode = "Fill"
+    [void]$grid.Columns.Add("Name", "Mitarbeiter (Anzeige)")
+    [void]$grid.Columns.Add("Ordner", "Ordner auf HiDrive")
+    $mm = [regex]::Match($konfig, '(?s)\$MitarbeiterOrdner\s*=\s*\[ordered\]@\{(.*?)\n\}')
+    if ($mm.Success) {
+        foreach ($p in [regex]::Matches($mm.Groups[1].Value, '"([^"]*)"\s*=\s*"([^"]*)"')) {
+            [void]$grid.Rows.Add($p.Groups[1].Value, $p.Groups[2].Value)
+        }
+    }
+    $grid.Add_CellDoubleClick({
+        param($s, $e)
+        if ($e.RowIndex -lt 0 -or $e.ColumnIndex -ne 1) { return }
+        $basis = $txtBasis.Text.Trim()
+        if (-not ($basis -and (Test-Path $basis -ErrorAction SilentlyContinue))) {
+            [System.Windows.Forms.MessageBox]::Show($form, "Der Mitarbeiter-Ordner '$basis' ist gerade nicht erreichbar - Ordnername bitte von Hand eintragen.", "Ordner anpassen") | Out-Null
+            return
+        }
+        $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
+        $dlg.Description = "Ordner des Mitarbeiters in $basis waehlen:"
+        $dlg.SelectedPath = $basis
+        if ($dlg.ShowDialog($form) -ne [System.Windows.Forms.DialogResult]::OK) { return }
+        $gewaehlt = $dlg.SelectedPath.TrimEnd('\')
+        if ((Split-Path $gewaehlt -Parent).TrimEnd('\') -ine $basis.TrimEnd('\')) {
+            [System.Windows.Forms.MessageBox]::Show($form, "Bitte einen Ordner direkt in '$basis' waehlen.", "Ordner anpassen") | Out-Null
+            return
+        }
+        if ($e.RowIndex -ge $grid.Rows.Count - 1 -and $grid.AllowUserToAddRows) { [void]$grid.Rows.Add("", "") }
+        $grid.Rows[$e.RowIndex].Cells[1].Value = (Split-Path $gewaehlt -Leaf)
+        if (-not $grid.Rows[$e.RowIndex].Cells[0].Value) { $grid.Rows[$e.RowIndex].Cells[0].Value = (Split-Path $gewaehlt -Leaf) }
+    })
+    $form.Controls.Add($grid)
+    $y += 268
+
+    # Prueft, ob es die eingetragenen Mitarbeiter-Ordner auf HiDrive gibt
+    $pruefeOrdner = {
+        $basis = $txtBasis.Text.Trim()
+        if (-not ($basis -and (Test-Path $basis -ErrorAction SilentlyContinue))) { return $null }
+        $fehlend = New-Object System.Collections.Generic.List[string]
+        foreach ($r in $grid.Rows) {
+            if ($r.IsNewRow) { continue }
+            $o = "$($r.Cells[1].Value)".Trim()
+            if (-not $o) { continue }
+            if (Test-Path (Join-Path $basis $o) -ErrorAction SilentlyContinue) {
+                $r.Cells[1].Style.BackColor = [System.Drawing.Color]::Empty
+            } else {
+                $r.Cells[1].Style.BackColor = [System.Drawing.Color]::MistyRose
+                [void]$fehlend.Add($o)
+            }
+        }
+        return ,$fehlend
+    }
+
+    $btnPruefen = New-Object System.Windows.Forms.Button
+    $btnPruefen.Text = "Ordner pruefen"
+    $btnPruefen.Location = New-Object System.Drawing.Point(15, $y)
+    $btnPruefen.Size = New-Object System.Drawing.Size(120, 30)
+    $btnPruefen.Add_Click({
+        $f = & $pruefeOrdner
+        if ($null -eq $f) { [System.Windows.Forms.MessageBox]::Show($form, "Der Mitarbeiter-Ordner ist gerade nicht erreichbar.", "Ordner pruefen") | Out-Null }
+        elseif ($f.Count -eq 0) { [System.Windows.Forms.MessageBox]::Show($form, "Alle Mitarbeiter-Ordner sind vorhanden.", "Ordner pruefen") | Out-Null }
+        else { [System.Windows.Forms.MessageBox]::Show($form, "Diese Ordner gibt es im Mitarbeiter-Ordner nicht (rot markiert):`n`n$($f -join "`n")", "Ordner pruefen") | Out-Null }
+    })
+    $form.Controls.Add($btnPruefen)
+
+    $btnOK = New-Object System.Windows.Forms.Button
+    $btnOK.Text = "Speichern"
+    $btnOK.Location = New-Object System.Drawing.Point(395, $y)
+    $btnOK.Size = New-Object System.Drawing.Size(110, 30)
+    $btnOK.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    $form.Controls.Add($btnOK)
+
+    $btnAbbrechen = New-Object System.Windows.Forms.Button
+    $btnAbbrechen.Text = "Abbrechen"
+    $btnAbbrechen.Location = New-Object System.Drawing.Point(515, $y)
+    $btnAbbrechen.Size = New-Object System.Drawing.Size(110, 30)
+    $btnAbbrechen.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+    $form.Controls.Add($btnAbbrechen)
+    $form.CancelButton = $btnAbbrechen
+
+    $script:OrdnerPaare = $null
+    $btnOK.Add_Click({
+        $grid.EndEdit() | Out-Null
+        $paare = New-Object System.Collections.Generic.List[object]
+        $namen = @{}
+        foreach ($r in $grid.Rows) {
+            if ($r.IsNewRow) { continue }
+            $n = "$($r.Cells[0].Value)".Trim(); $o = "$($r.Cells[1].Value)".Trim()
+            if (-not $n -and -not $o) { continue }
+            if (-not $n -or -not $o) {
+                [System.Windows.Forms.MessageBox]::Show($form, "Bei jedem Mitarbeiter muessen Name UND Ordner eingetragen sein.", "Fehlende Angabe") | Out-Null
+                $form.DialogResult = [System.Windows.Forms.DialogResult]::None; return
+            }
+            if ($namen.ContainsKey($n.ToLowerInvariant())) {
+                [System.Windows.Forms.MessageBox]::Show($form, "Der Name '$n' steht doppelt in der Liste.", "Doppelter Eintrag") | Out-Null
+                $form.DialogResult = [System.Windows.Forms.DialogResult]::None; return
+            }
+            $namen[$n.ToLowerInvariant()] = $true
+            [void]$paare.Add([PSCustomObject]@{ Name = $n; Ordner = $o })
+        }
+        if ($paare.Count -eq 0) {
+            [System.Windows.Forms.MessageBox]::Show($form, "Bitte mindestens einen Mitarbeiter eintragen.", "Fehlende Angabe") | Out-Null
+            $form.DialogResult = [System.Windows.Forms.DialogResult]::None; return
+        }
+        foreach ($p in @(@($txtStandort, "Standortname"), @($txtBasis, "HiDrive Mitarbeiter-Ordner"), @($txtShop, "HiDrive Shop-Ordner"), @($txtKasse, "HiDrive Kassen-Ordner"))) {
+            if ([string]::IsNullOrWhiteSpace($p[0].Text)) {
+                [System.Windows.Forms.MessageBox]::Show($form, "Bitte '$($p[1])' ausfuellen.", "Fehlende Angabe") | Out-Null
+                $form.DialogResult = [System.Windows.Forms.DialogResult]::None; return
+            }
+        }
+        $fehlend = & $pruefeOrdner
+        if ($fehlend -and $fehlend.Count -gt 0) {
+            $a = [System.Windows.Forms.MessageBox]::Show($form, "Diese Mitarbeiter-Ordner gibt es auf HiDrive nicht (rot markiert):`n`n$($fehlend -join "`n")`n`nTrotzdem speichern? (Der Ordner wird dann bei der ersten Ablage neu angelegt.)", "Ordner fehlen", [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Warning)
+            if ($a -ne [System.Windows.Forms.DialogResult]::Yes) { $form.DialogResult = [System.Windows.Forms.DialogResult]::None; return }
+        }
+        $script:OrdnerPaare = $paare
+    })
+
+    if ($form.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK -or $null -eq $script:OrdnerPaare) { return }
+
+    try {
+        $neu = $konfig
+        $neu = Setze-KonfigWert $neu "StandortName" $txtStandort.Text
+        $neu = Setze-KonfigWert $neu "ZielBasis" $txtBasis.Text
+        $neu = Setze-KonfigWert $neu "ShopOrdner" $txtShop.Text
+        $neu = Setze-KonfigWert $neu "KassenOrdner" $txtKasse.Text
+        $neu = Setze-KonfigWert $neu "LokalerOrdner" $txtLokal.Text
+        $neu = Setze-KonfigMitarbeiter $neu $script:OrdnerPaare
+        if ($neu -eq $konfig) { return }
+        $inhalt = $teile.Kopf + $neu + $teile.Code
+        $fehler = $null
+        [void][System.Management.Automation.Language.Parser]::ParseInput($inhalt, [ref]$null, [ref]$fehler)
+        if ($fehler -and $fehler.Count -gt 0) { throw "Ergebnis waere fehlerhaft (Zeile $($fehler[0].Extent.StartLineNumber): $($fehler[0].Message))" }
+        Copy-Item -Path $script:EigenerPfad -Destination (Join-Path (Split-Path $script:EigenerPfad) "Watcher_vor_Ordneraenderung.ps1") -Force
+        Set-Content -Path $script:EigenerPfad -Value $inhalt -Encoding UTF8 -Force
+    } catch {
+        [System.Windows.Forms.MessageBox]::Show("Speichern fehlgeschlagen: $($_.Exception.Message)`n`nEs wurde nichts geaendert.", "Ordner anpassen") | Out-Null
+        return
+    }
+    Schreibe-Log "Ordner angepasst (Standort '$($txtStandort.Text)', $($script:OrdnerPaare.Count) Mitarbeiter). Watcher startet neu."
+    [System.Windows.Forms.MessageBox]::Show("Gespeichert. Der Watcher startet jetzt neu und verwendet die neuen Ordner.", "Ordner anpassen") | Out-Null
+    Starte-WatcherNeu
+}
+
 # ======================= TRAY-SYMBOL =======================
 
 $trayIcon = New-Object System.Windows.Forms.NotifyIcon
@@ -2690,6 +2945,11 @@ $menuUebersprungen.Add_Click({
         }
     }
     Schreibe-Log "$anzahl uebersprungene(s) Dokument(e) zur erneuten Erfassung zurueckgeholt."
+})
+$menuOrdner = $menu.Items.Add("Ordner anpassen...")
+$menuOrdner.Add_Click({
+    $timer.Stop()
+    try { Zeige-OrdnerEinstellungen } finally { if (-not $script:WirdBeendet) { try { $timer.Start() } catch {} } }
 })
 $menuAblageOeffnen = $menu.Items.Add("Ablage-Ordner oeffnen")
 $menuAblageOeffnen.Add_Click({ Start-Process -FilePath "explorer.exe" -ArgumentList "`"$WatchFolder`"" })
