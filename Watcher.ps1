@@ -244,8 +244,8 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "15"
-$script:WatcherVersionDatum = "07.11.2026"
+$script:WatcherVersion      = "16"
+$script:WatcherVersionDatum = "10.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
 # Bei einem automatischen Update bleibt der Abschnitt KONFIGURATION dieses
@@ -1265,6 +1265,7 @@ $script:WIA_FORMAT_JPEG                        = "{B96B3CAE-0728-11D3-9D7B-0000F
 $script:WIA_FORMAT_TIFF                        = "{B96B3CB1-0728-11D3-9D7B-0000F81EF32E}"
 $script:WIA_DPS_PAGES                          = 3096
 $script:WIA_ERROR_PAPER_EMPTY                  = 0x80210003
+$script:WIA_ERROR_BUSY                         = 0x80210006
 # (Sicherheitsgrenze fuer Endlos-Scans: siehe $MaxSeitenProScan oben in der
 # KONFIGURATION - Vorfall: Scanner hat trotz leerem Einzug immer weitergescannt.)
 $script:WIA_IPA_DATATYPE                       = 4103
@@ -1882,13 +1883,18 @@ function Wende-ScanOptionenAn($device, $item, $optionen) {
 # nacheinander: BMP, PNG, JPEG, zuletzt ueber WIA.CommonDialog (ohne
 # sichtbares Fenster). Liefert $null, wenn der Scanner auf keinem Weg ein
 # Bild herausgibt.
-function Hole-WiaBild($item) {
+# $folgeseite = $true: es wurde in diesem Scan schon mindestens eine Seite
+# eingelesen. Dann meldet z.B. der Samsung-Treiber bei leerem Einzug nicht
+# "Einzug leer", sondern "WIA-Geraet ist ausgelastet" - das wird dann als
+# Ende des Stapels gewertet (keine weiteren Formate, kein Windows-
+# Scanfenster, das sonst haengen bleiben kann).
+function Hole-WiaBild($item, [bool]$folgeseite) {
     $versuche = @(
         @{ Name = "Transfer BMP";     Format = $script:WIA_FORMAT_BMP;  Dialog = $false },
         @{ Name = "Transfer PNG";     Format = $script:WIA_FORMAT_PNG;  Dialog = $false },
-        @{ Name = "Transfer JPEG";    Format = $script:WIA_FORMAT_JPEG; Dialog = $false },
-        @{ Name = "CommonDialog BMP"; Format = $script:WIA_FORMAT_BMP;  Dialog = $true  }
+        @{ Name = "Transfer JPEG";    Format = $script:WIA_FORMAT_JPEG; Dialog = $false }
     )
+    if (-not $folgeseite) { $versuche += @{ Name = "CommonDialog BMP"; Format = $script:WIA_FORMAT_BMP; Dialog = $true } }
     $letzterFehler = $null
     foreach ($v in $versuche) {
         $bild = $null
@@ -1904,6 +1910,20 @@ function Hole-WiaBild($item) {
             if (-not $hr -and $_.Exception.InnerException) { $hr = $_.Exception.InnerException.HResult }
             # "Einzug leer" sofort weiterreichen - nicht mit anderen Formaten weiterprobieren
             if ($hr -eq $script:WIA_ERROR_PAPER_EMPTY -or $_.Exception.Message -match "0x80210003") { throw }
+            $istBesetzt = ($hr -eq $script:WIA_ERROR_BUSY -or $_.Exception.Message -match "0x80210006|ausgelastet|busy")
+            if ($istBesetzt -and $folgeseite) {
+                Schreibe-Log "Scan-Abholung '$($v.Name)': Scanner meldet 'ausgelastet' nach der letzten Seite - Einzug gilt als leer."
+                throw
+            }
+            if ($istBesetzt) {
+                # Beim ersten Blatt: Scanner kurz in Ruhe lassen, dann einmal neu versuchen
+                Schreibe-Log "Scan-Abholung '$($v.Name)': Scanner ausgelastet - neuer Versuch in 3 Sekunden."
+                Start-Sleep -Seconds 3
+                try {
+                    $bild = $item.Transfer($v.Format)
+                    if ($null -ne $bild) { return $bild }
+                } catch {}
+            }
             $letzterFehler = $_
             Schreibe-Log "Scan-Abholung '$($v.Name)' fehlgeschlagen: $($_.Exception.Message)"
             continue
@@ -1961,7 +1981,7 @@ function Scanne-MitEinzug($device, $item, $maxSeiten) {
         # beeinflussbar) oder an unserem Skript (dann behebbar).
         $zeitmesser = [System.Diagnostics.Stopwatch]::StartNew()
         try {
-            $bild = Hole-WiaBild $item
+            $bild = Hole-WiaBild $item ($seitenNr -gt 0)
         } catch {
             $hResult = $_.Exception.HResult
             if (-not $hResult -and $_.Exception.InnerException) { $hResult = $_.Exception.InnerException.HResult }
@@ -1969,6 +1989,7 @@ function Scanne-MitEinzug($device, $item, $maxSeiten) {
                 break   # Einzug ist leer - alle Seiten wurden erfasst
             }
             if ($seitenNr -eq 0) { throw }
+            Schreibe-Log "Einzug: nach $seitenNr Seite(n) keine weitere Seite ($($_.Exception.Message)) - Scan beendet."
             break
         }
         if ($null -eq $bild) {

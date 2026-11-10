@@ -1,4 +1,4 @@
-DiNo1 Druck & Scan - Uebersicht ALLER Einstellungen (Paket 15)
+DiNo1 Druck & Scan - Uebersicht ALLER Einstellungen (Paket 16)
 ================================================================
 Installation von Dino1 GmbH und Andre Meschke
 
@@ -289,3 +289,13 @@ NEU IN PAKET 15 (Version 15)
   im Abschnitt KONFIGURATION von C:\PaperPortErsatz\Watcher.ps1 (Sicherung:
   Watcher_vor_Ordneraenderung.ps1); der Watcher startet danach neu.
   Die Aenderung gilt nur fuer DIESEN PC und bleibt bei Updates erhalten.
+
+
+================================================================
+NEU IN PAKET 16 (Version 16)
+================================================================
+
+- Einzug: Meldet der Scanner nach der letzten Seite "WIA-Geraet ist
+  ausgelastet" (z.B. Samsung), gilt der Einzug als leer und der Scan wird
+  normal abgeschlossen - statt drei weitere Versuche und ein haengendes
+  Windows-Scanfenster.
