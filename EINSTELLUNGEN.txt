@@ -1,4 +1,4 @@
-DiNo1 Druck & Scan - Uebersicht ALLER Einstellungen (Paket 16)
+DiNo1 Druck & Scan - Uebersicht ALLER Einstellungen (Paket 17)
 ================================================================
 Installation von Dino1 GmbH und Andre Meschke
 
@@ -193,6 +193,8 @@ Ordner anpassen...                    HiDrive-Ordner, Mitarbeiter, lokalen
                                       Ordner und Standortnamen dieses PCs
                                       aendern (ohne Setup/Admin)
 Ablage-Ordner oeffnen                 oeffnet C:\PaperPortErsatz\Ablage
+Laufende Watcher pruefen              zeigt alle laufenden Watcher dieses PCs,
+                                      doppelte koennen beendet werden
 Status: Log-Datei oeffnen             Protokoll ansehen
 Nach Updates suchen                   sofort pruefen (sonst ca. alle 10 Min.)
 Vorherige Version wiederherstellen    macht das letzte Update rueckgaengig
@@ -299,3 +301,15 @@ NEU IN PAKET 16 (Version 16)
   ausgelastet" (z.B. Samsung), gilt der Einzug als leer und der Scan wird
   normal abgeschlossen - statt drei weitere Versuche und ein haengendes
   Windows-Scanfenster.
+
+
+================================================================
+NEU IN PAKET 17 (Version 17)
+================================================================
+
+- Tray -> "Laufende Watcher pruefen": listet alle laufenden Watcher
+  (PID, Startzeit, Benutzer). Laeuft er fuer denselben Benutzer doppelt,
+  kann man die ueberzaehligen direkt beenden.
+- Automatisch alle ~5 Minuten: Warnhinweis am Tray-Symbol, wenn der
+  Watcher doppelt laeuft; in Uebersicht.cmd erscheint der PC dann rot
+  ("Watcher 2x gestartet").

@@ -244,7 +244,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "16"
+$script:WatcherVersion      = "17"
 $script:WatcherVersionDatum = "10.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -2930,6 +2930,73 @@ function Zeige-OrdnerEinstellungen {
     Starte-WatcherNeu
 }
 
+# ======================= DOPPELT LAUFENDE WATCHER =======================
+# Findet alle PowerShell-Prozesse, die eine Watcher.ps1 ausfuehren - auch
+# "Geist"-Prozesse ohne Tray-Symbol und Watcher anderer angemeldeter
+# Benutzer (deren Befehlszeile sieht man ohne Admin-Rechte evtl. nicht).
+function Ermittle-WatcherProzesse {
+    $liste = New-Object System.Collections.Generic.List[object]
+    try {
+        $prozesse = @(Get-CimInstance -ClassName Win32_Process -Filter "Name='powershell.exe' OR Name='pwsh.exe'" -ErrorAction Stop)
+    } catch {
+        $prozesse = @(Get-WmiObject -Class Win32_Process -Filter "Name='powershell.exe' OR Name='pwsh.exe'" -ErrorAction SilentlyContinue)
+    }
+    foreach ($p in $prozesse) {
+        $befehl = "$($p.CommandLine)"
+        if ($p.ProcessId -ne $PID -and $befehl -notmatch 'Watcher[^\\/]*\.ps1') { continue }
+        $benutzer = "?"
+        try {
+            $o = Invoke-CimMethod -InputObject $p -MethodName GetOwner -ErrorAction Stop
+            if ($o.User) { $benutzer = $(if ($o.Domain) { "$($o.Domain)\$($o.User)" } else { $o.User }) }
+        } catch {}
+        $start = $null
+        try { $start = (Get-Process -Id $p.ProcessId -ErrorAction Stop).StartTime } catch {}
+        $datei = "?"
+        if ($befehl -match '([^"\s\\/]*Watcher[^"\\/]*\.ps1)') { $datei = $matches[1] }
+        [void]$liste.Add([PSCustomObject]@{
+            Pid      = [int]$p.ProcessId
+            Benutzer = $benutzer
+            Start    = $start
+            Datei    = $datei
+            Eigener  = ([int]$p.ProcessId -eq $PID)
+            EigenerBenutzer = ($benutzer -like "*\$($env:USERNAME)" -or $benutzer -eq $env:USERNAME)
+        })
+    }
+    return ,$liste
+}
+
+function Zeige-WatcherProzesse {
+    $liste = Ermittle-WatcherProzesse
+    $zeilen = foreach ($w in ($liste | Sort-Object Start)) {
+        $s = if ($w.Start) { $w.Start.ToString("dd.MM. HH:mm:ss") } else { "?" }
+        "PID $($w.Pid)   gestartet $s   Benutzer $($w.Benutzer)   $($w.Datei)$(if ($w.Eigener) { '   <- dieser (mit Tray-Symbol)' })"
+    }
+    $andere = @($liste | Where-Object { -not $_.Eigener })
+    $eigeneAndere = @($andere | Where-Object { $_.EigenerBenutzer })
+    $text = "Laufende Watcher auf diesem PC: $($liste.Count)`n`n$($zeilen -join "`n")"
+    Schreibe-Log "Laufende Watcher geprueft: $($liste.Count) ($((($liste | ForEach-Object { "PID $($_.Pid) $($_.Benutzer)" }) -join ', ')))"
+    if ($andere.Count -eq 0) {
+        [System.Windows.Forms.MessageBox]::Show("$text`n`nAlles in Ordnung - der Watcher laeuft nur einmal.", "Laufende Watcher", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+        return
+    }
+    if ($eigeneAndere.Count -eq 0) {
+        [System.Windows.Forms.MessageBox]::Show("$text`n`nDie anderen Watcher gehoeren anderen angemeldeten Benutzern (das ist normal, z.B. bei schnellem Benutzerwechsel).", "Laufende Watcher", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+        return
+    }
+    $antwort = [System.Windows.Forms.MessageBox]::Show("$text`n`nDer Watcher laeuft fuer diesen Benutzer DOPPELT ($($eigeneAndere.Count) weitere(r)). Die weiteren jetzt beenden? Dieser hier (mit Tray-Symbol) laeuft weiter.", "Watcher laeuft doppelt", [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Warning)
+    if ($antwort -ne [System.Windows.Forms.DialogResult]::Yes) { return }
+    $fehler = New-Object System.Collections.Generic.List[string]
+    foreach ($w in $eigeneAndere) {
+        try { Stop-Process -Id $w.Pid -Force -ErrorAction Stop; Schreibe-Log "Doppelten Watcher beendet: PID $($w.Pid)" }
+        catch { [void]$fehler.Add("PID $($w.Pid): $($_.Exception.Message)") }
+    }
+    if ($fehler.Count -gt 0) {
+        [System.Windows.Forms.MessageBox]::Show("Nicht alle konnten beendet werden:`n$($fehler -join "`n")", "Laufende Watcher") | Out-Null
+    } else {
+        [System.Windows.Forms.MessageBox]::Show("Erledigt - jetzt laeuft nur noch dieser Watcher.", "Laufende Watcher") | Out-Null
+    }
+}
+
 # ======================= TRAY-SYMBOL =======================
 
 $trayIcon = New-Object System.Windows.Forms.NotifyIcon
@@ -2990,6 +3057,11 @@ $menu.Add_Opening({
     }
 })
 [void]$menu.Items.Add("-")
+$menuDoppelt = $menu.Items.Add("Laufende Watcher pruefen")
+$menuDoppelt.Add_Click({
+    $timer.Stop()
+    try { Zeige-WatcherProzesse } finally { try { $timer.Start() } catch {} }
+})
 $menuInfo = $menu.Items.Add("Status: Log-Datei oeffnen")
 $menuInfo.Add_Click({ Start-Process -FilePath "notepad.exe" -ArgumentList "`"$LogDatei`"" })
 $menuUpdate = $menu.Items.Add("Nach Updates suchen")
@@ -3317,6 +3389,15 @@ function Ermittle-Zustand {
 
 function Pruefe-Zustand {
     $z = Ermittle-Zustand
+    $script:AnzahlWatcher = 0
+    try {
+        $wl = Ermittle-WatcherProzesse
+        $doppelt = @($wl | Where-Object { -not $_.Eigener -and $_.EigenerBenutzer })
+        $script:AnzahlWatcher = 1 + $doppelt.Count   # nur die dieses Benutzers
+        if ($doppelt.Count -gt 0) {
+            Warne-Einmal "doppelt" "Watcher laeuft doppelt" "Der Watcher laeuft fuer diesen Benutzer $($doppelt.Count + 1)-mal (PID $((($doppelt | ForEach-Object { $_.Pid }) -join ', '))). Rechtsklick aufs Symbol -> 'Laufende Watcher pruefen' zum Beenden." $null
+        }
+    } catch {}
     if (-not $z.HiDriveErreichbar) {
         Warne-Einmal "hidrive" "HiDrive nicht erreichbar" "'$ZielBasis' ist gerade nicht erreichbar. Dokumente werden vorerst auf diesem PC gesammelt und spaeter automatisch uebertragen." $null
     } elseif ($z.NichtUebertragenAlt -gt 0) {
@@ -3350,6 +3431,7 @@ function Schreibe-Status($zustand) {
             Texterkennung     = $(if (-not $OcrAktiv) { "aus" } elseif (-not $script:OcrGeprueft) { "noch nicht benutzt" } elseif ($script:OcrEngine) { "bereit" } else { "nicht verfuegbar" })
             UpdateQuelle      = $UpdateQuelle
             UpdatesGesperrt   = [bool](Test-Path $script:UpdateSperrDatei)
+            LaufendeWatcher   = [int]$script:AnzahlWatcher
         }
         $datei = Join-Path $StatusOrdner ((Sanitize-Dateiname "$($env:COMPUTERNAME)_$($env:USERNAME)") + ".json")
         [System.IO.File]::WriteAllText($datei, ($status | ConvertTo-Json -Depth 3), (New-Object System.Text.UTF8Encoding($false)))

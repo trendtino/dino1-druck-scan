@@ -114,6 +114,7 @@ function Lade-Status {
             if (-not $j.HiDriveErreichbar) { [void]$hinweise.Add("HiDrive nicht erreichbar"); $problem = $true }
             if ([int]$j.NichtUebertragen -gt 0) { [void]$hinweise.Add("$($j.NichtUebertragen) nicht uebertragen"); $problem = $true }
             if ($j.UpdatesGesperrt) { [void]$hinweise.Add("Update zurueckgestellt") }
+            if ([int]$j.LaufendeWatcher -gt 1) { [void]$hinweise.Add("Watcher $($j.LaufendeWatcher)x gestartet"); $problem = $true }
         }
         if ($j.Version) { $versionen["$($j.Version)"] = $true }
         [PSCustomObject]@{
