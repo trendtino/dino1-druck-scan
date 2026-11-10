@@ -244,7 +244,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "17"
+$script:WatcherVersion      = "18"
 $script:WatcherVersionDatum = "10.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -3433,10 +3433,30 @@ function Schreibe-Status($zustand) {
             UpdatesGesperrt   = [bool](Test-Path $script:UpdateSperrDatei)
             LaufendeWatcher   = [int]$script:AnzahlWatcher
         }
-        $datei = Join-Path $StatusOrdner ((Sanitize-Dateiname "$($env:COMPUTERNAME)_$($env:USERNAME)") + ".json")
-        [System.IO.File]::WriteAllText($datei, ($status | ConvertTo-Json -Depth 3), (New-Object System.Text.UTF8Encoding($false)))
+        $name = (Sanitize-Dateiname "$($env:COMPUTERNAME)_$($env:USERNAME)") + ".json"
+        $datei = Join-Path $StatusOrdner $name
+        # Erst lokal schreiben und dann kopieren - genau wie die Dokumente.
+        # Direktes Schreiben auf das HiDrive-Laufwerk wird von manchen
+        # HiDrive-Verbindungen abgelehnt ("kann auf die Datei nicht zugreifen").
+        $lokal = Join-Path $ScanTempOrdner ("Status_" + $name)
+        [System.IO.File]::WriteAllText($lokal, ($status | ConvertTo-Json -Depth 3), (New-Object System.Text.UTF8Encoding($false)))
+        try {
+            Copy-Item -Path $lokal -Destination $datei -Force -ErrorAction Stop
+        } catch {
+            # Vorhandene Datei laesst sich evtl. nicht ueberschreiben: loeschen und neu ablegen
+            Remove-Item -Path $datei -Force -ErrorAction SilentlyContinue
+            Copy-Item -Path $lokal -Destination $datei -Force -ErrorAction Stop
+        }
+        Remove-Item -Path $lokal -Force -ErrorAction SilentlyContinue
+        if ($script:StatusFehler) { Schreibe-Log "Statusdatei wird wieder geschrieben: $datei" }
+        $script:StatusFehler = ""
     } catch {
-        Schreibe-Log "HINWEIS: Statusdatei konnte nicht geschrieben werden: $($_.Exception.Message)"
+        # Nur bei neuem Fehlertext ins Log (sonst alle 5 Minuten dieselbe Zeile)
+        $meldung = ($_.Exception.Message -replace '\s+', ' ').Trim()
+        if ($meldung -ne $script:StatusFehler) {
+            Schreibe-Log "HINWEIS: Statusdatei in '$StatusOrdner' konnte nicht geschrieben werden: $meldung"
+        }
+        $script:StatusFehler = $meldung
     }
 }
 

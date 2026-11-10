@@ -1,4 +1,4 @@
-DiNo1 Druck & Scan - Uebersicht ALLER Einstellungen (Paket 17)
+DiNo1 Druck & Scan - Uebersicht ALLER Einstellungen (Paket 18)
 ================================================================
 Installation von Dino1 GmbH und Andre Meschke
 
@@ -313,3 +313,7 @@ NEU IN PAKET 17 (Version 17)
 - Automatisch alle ~5 Minuten: Warnhinweis am Tray-Symbol, wenn der
   Watcher doppelt laeuft; in Uebersicht.cmd erscheint der PC dann rot
   ("Watcher 2x gestartet").
+
+- Version 18: Statusdatei wird erst lokal geschrieben und dann nach HiDrive
+  kopiert (direktes Schreiben lehnte HiDrive ab). Fehler stehen nur noch
+  einmal im Log statt alle 5 Minuten.
