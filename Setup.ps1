@@ -240,8 +240,8 @@ $VorschauAktiv = $true
 # Ordner, in den dieser PC alle paar Minuten eine kleine Statusdatei schreibt
 # (Version, letzte Ablage, Fehler, wartende Dateien). Uebersicht.cmd zeigt
 # daraus alle PCs auf einen Blick. Leer lassen = Ordner
-# "DiNo1-Druck-Scan-Status" neben dem Mitarbeiter-Ordner (bei X:\Mitarbeiter
-# also X:\DiNo1-Druck-Scan-Status). "-" = keine Statusdatei schreiben.
+# "DiNo1-Druck-Scan-Status" im Shop-Ordner (z.B. "Y:\o2 shops\o2 Partnershop
+# Vechta\DiNo1-Druck-Scan-Status"). "-" = keine Statusdatei schreiben.
 $StatusOrdner = ""
 
 # Lokaler Ausweich-Ordner, falls HiDrive gerade nicht erreichbar ist

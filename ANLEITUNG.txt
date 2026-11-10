@@ -370,8 +370,10 @@ WICHTIG:
 UEBERSICHT ALLER PCs (ab Paket 14)
 ------------------------------------------------------
 Jeder PC schreibt etwa alle 5 Minuten eine kleine Statusdatei nach
-X:\DiNo1-Druck-Scan-Status (bzw. neben den Mitarbeiter-Ordner, Einstellung
+"<Shop-Ordner>\DiNo1-Druck-Scan-Status" (Einstellung
 $StatusOrdner). Uebersicht.cmd aus dem Paket doppelklicken - es zeigt alle
 PCs mit Version, letzter Meldung, HiDrive erreichbar ja/nein, nicht
 uebertragenen Dokumenten, letzter Ablage und letztem Fehler.
 Rot = Problem, grau = PC meldet sich seit ueber 30 Minuten nicht.
+Uebersicht.cmd sucht alle Shops unter dem Ordner, der die Shop-Ordner
+enthaelt (z.B. Y:\o2 shops) und zeigt alle PCs aller Shops zusammen.

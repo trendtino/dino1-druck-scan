@@ -178,8 +178,8 @@ $VorschauAktiv = $true
 # Ordner, in den dieser PC alle paar Minuten eine kleine Statusdatei schreibt
 # (Version, letzte Ablage, Fehler, wartende Dateien). Uebersicht.cmd zeigt
 # daraus alle PCs auf einen Blick. Leer lassen = Ordner
-# "DiNo1-Druck-Scan-Status" neben dem Mitarbeiter-Ordner (bei X:\Mitarbeiter
-# also X:\DiNo1-Druck-Scan-Status). "-" = keine Statusdatei schreiben.
+# "DiNo1-Druck-Scan-Status" im Shop-Ordner (z.B. "Y:\o2 shops\o2 Partnershop
+# Vechta\DiNo1-Druck-Scan-Status"). "-" = keine Statusdatei schreiben.
 $StatusOrdner = ""
 
 # Lokaler Ausweich-Ordner, falls HiDrive gerade nicht erreichbar ist
@@ -244,7 +244,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "19"
+$script:WatcherVersion      = "20"
 $script:WatcherVersionDatum = "10.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -266,7 +266,7 @@ if ([string]::IsNullOrWhiteSpace($LokalerOrdner)) {
     $LokalerOrdner = Join-Path ([Environment]::GetFolderPath("MyDocuments")) "Scans"
 }
 if ([string]::IsNullOrWhiteSpace($StatusOrdner)) {
-    try { $StatusOrdner = Join-Path (Split-Path $ZielBasis -Parent) "DiNo1-Druck-Scan-Status" } catch { $StatusOrdner = "-" }
+    try { $StatusOrdner = Join-Path $ShopOrdner "DiNo1-Druck-Scan-Status" } catch { $StatusOrdner = "-" }
 }
 
 # Ordner anlegen, falls sie noch nicht existieren

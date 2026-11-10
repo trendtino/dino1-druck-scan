@@ -1,4 +1,4 @@
-DiNo1 Druck & Scan - Uebersicht ALLER Einstellungen (Paket 19)
+DiNo1 Druck & Scan - Uebersicht ALLER Einstellungen (Paket 20)
 ================================================================
 Installation von Dino1 GmbH und Andre Meschke
 
@@ -257,7 +257,9 @@ $OcrAktiv = $true          Texterkennung (in Windows eingebaut, offline):
 $VorschauAktiv = $true     Vorschau der ersten Seite im Erfassungsfenster
 $StatusOrdner = ""         Ordner fuer die Statusdateien aller PCs.
                            Leer = neben dem Mitarbeiter-Ordner, z.B.
-                           X:\DiNo1-Druck-Scan-Status. "-" = aus.
+                           (ab Version 20) im Shop-Ordner, z.B.
+                           Y:\o2 shops\o2 Partnershop Vechta\
+                           DiNo1-Druck-Scan-Status. "-" = aus.
 
 Weitere Neuerungen:
 - Scan-Optionen: "Stapel an leeren Blaettern in Dokumente trennen"
@@ -319,3 +321,6 @@ NEU IN PAKET 17 (Version 17)
   einmal im Log statt alle 5 Minuten.
 - Version 19: Update-Suche umgeht den 5-Minuten-Zwischenspeicher von
   GitHub - eine neue Version ist sofort nach dem Hochladen verfuegbar.
+- Version 20: Statusdateien liegen jetzt im Shop-Ordner
+  ("<Shop-Ordner>\DiNo1-Druck-Scan-Status"). Uebersicht.cmd sammelt sie
+  aus allen Shops.

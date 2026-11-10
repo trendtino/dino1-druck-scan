@@ -3,7 +3,7 @@ DiNo1 Druck & Scan - Uebersicht aller PCs
 
 Liest die Statusdateien, die jeder PC alle paar Minuten in den Status-Ordner
 auf HiDrive schreibt (Einstellung $StatusOrdner, Standard
-X:\DiNo1-Druck-Scan-Status), und zeigt sie als Tabelle:
+DiNo1-Druck-Scan-Status im Shop-Ordner), und zeigt sie als Tabelle:
 Version, letzte Meldung, HiDrive erreichbar, nicht uebertragene Dokumente,
 letzte Ablage, letzter Fehler.
 
@@ -16,30 +16,51 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
-# Status-Ordner ermitteln: Parameter -> Einstellung der Installation auf
-# diesem PC -> X:\DiNo1-Druck-Scan-Status -> nachfragen
-function Ermittle-StatusOrdner {
+# Statusdateien liegen pro Shop in "<Shop-Ordner>\DiNo1-Druck-Scan-Status".
+# Gesucht wird ab dem Ordner, der alle Shops enthaelt (z.B. "Y:\o2 shops"):
+# dort und bis zu zwei Ebenen darunter.
+$script:StatusName = "DiNo1-Druck-Scan-Status"
+
+function Finde-StatusOrdner($wurzel) {
+    $treffer = New-Object System.Collections.Generic.List[string]
+    if (-not $wurzel -or -not (Test-Path -LiteralPath $wurzel)) { return ,$treffer }
+    if ((Split-Path $wurzel -Leaf) -eq $script:StatusName) { [void]$treffer.Add($wurzel); return ,$treffer }
+    $ebene = @(Get-Item -LiteralPath $wurzel)
+    for ($i = 0; $i -le 2; $i++) {
+        $naechste = New-Object System.Collections.Generic.List[object]
+        foreach ($o in $ebene) {
+            foreach ($u in @(Get-ChildItem -LiteralPath $o.FullName -Directory -ErrorAction SilentlyContinue)) {
+                if ($u.Name -eq $script:StatusName) { [void]$treffer.Add($u.FullName) } else { [void]$naechste.Add($u) }
+            }
+        }
+        $ebene = $naechste
+    }
+    return ,$treffer
+}
+
+# Startordner: Parameter -> aus der Installation auf diesem PC (Ordner ueber
+# dem Shop-Ordner) -> nachfragen
+function Ermittle-Wurzel {
     if ($Ordner) { return $Ordner }
     $watcher = "C:\PaperPortErsatz\Watcher.ps1"
     if (Test-Path $watcher) {
         try {
             $text = [System.IO.File]::ReadAllText($watcher)
-            $status = ""; $zielBasis = ""
-            if ($text -match '(?m)^\$StatusOrdner\s*=\s*"([^"]*)"') { $status = $matches[1] }
-            if ($text -match '(?m)^\$ZielBasis\s*=\s*"([^"]*)"') { $zielBasis = $matches[1] }
-            if ($status -and $status -ne "-") { return $status }
-            if ($zielBasis) { return (Join-Path (Split-Path $zielBasis -Parent) "DiNo1-Druck-Scan-Status") }
+            if ($text -match '(?m)^\$StatusOrdner\s*=\s*"([^"]+)"' -and $matches[1] -ne "-") { return (Split-Path (Split-Path $matches[1] -Parent) -Parent) }
+            if ($text -match '(?m)^\$ShopOrdner\s*=\s*"([^"]+)"') { return (Split-Path $matches[1] -Parent) }
         } catch {}
     }
-    return "X:\DiNo1-Druck-Scan-Status"
+    return ""
 }
 
-$script:StatusOrdner = Ermittle-StatusOrdner
-if (-not (Test-Path $script:StatusOrdner)) {
+$script:Wurzel = Ermittle-Wurzel
+$script:StatusOrdnerListe = Finde-StatusOrdner $script:Wurzel
+if ($script:StatusOrdnerListe.Count -eq 0) {
     $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
-    $dlg.Description = "Status-Ordner '$($script:StatusOrdner)' nicht gefunden. Bitte den Ordner mit den Statusdateien waehlen (z.B. auf HiDrive):"
+    $dlg.Description = "Keine Statusdateien gefunden$(if ($script:Wurzel) { " unter '$($script:Wurzel)'" }). Bitte den Ordner waehlen, der alle Shops enthaelt (z.B. Y:\o2 shops):"
     if ($dlg.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { exit }
-    $script:StatusOrdner = $dlg.SelectedPath
+    $script:Wurzel = $dlg.SelectedPath
+    $script:StatusOrdnerListe = Finde-StatusOrdner $script:Wurzel
 }
 
 $form = New-Object System.Windows.Forms.Form
@@ -76,9 +97,9 @@ $btnNeu.Size = New-Object System.Drawing.Size(120, 28)
 $leiste.Controls.Add($btnNeu)
 
 $btnOrdner = New-Object System.Windows.Forms.Button
-$btnOrdner.Text = "Status-Ordner oeffnen"
+$btnOrdner.Text = "Ordner oeffnen"
 $btnOrdner.Size = New-Object System.Drawing.Size(160, 28)
-$btnOrdner.Add_Click({ Start-Process -FilePath "explorer.exe" -ArgumentList "`"$($script:StatusOrdner)`"" })
+$btnOrdner.Add_Click({ Start-Process -FilePath "explorer.exe" -ArgumentList "`"$($script:Wurzel)`"" })
 $leiste.Controls.Add($btnOrdner)
 
 $lblLegende = New-Object System.Windows.Forms.Label
@@ -97,7 +118,8 @@ foreach ($s in $spalten) { [void]$grid.Columns.Add($s[1], $s[0]) }
 
 function Lade-Status {
     $grid.Rows.Clear()
-    $dateien = @(Get-ChildItem -Path $script:StatusOrdner -Filter "*.json" -File -ErrorAction SilentlyContinue)
+    $script:StatusOrdnerListe = Finde-StatusOrdner $script:Wurzel
+    $dateien = @(foreach ($o in $script:StatusOrdnerListe) { Get-ChildItem -LiteralPath $o -Filter "*.json" -File -ErrorAction SilentlyContinue })
     $jetzt = Get-Date
     $versionen = @{}
     $eintraege = foreach ($d in $dateien) {
@@ -136,7 +158,7 @@ function Lade-Status {
         if ($e.Alt) { $zeile.DefaultCellStyle.ForeColor = [System.Drawing.Color]::Gray }
         elseif ($e.Problem) { $zeile.DefaultCellStyle.BackColor = [System.Drawing.Color]::MistyRose }
     }
-    $lbl.Text = "Status-Ordner: $($script:StatusOrdner)    PCs: $(@($eintraege).Count)    Versionen im Einsatz: $((@($versionen.Keys) | Sort-Object) -join ', ')    (Stand $(Get-Date -Format 'HH:mm:ss'))"
+    $lbl.Text = "Gesucht in: $($script:Wurzel) ($($script:StatusOrdnerListe.Count) Shop(s))    PCs: $(@($eintraege).Count)    Versionen im Einsatz: $((@($versionen.Keys) | Sort-Object) -join ', ')    (Stand $(Get-Date -Format 'HH:mm:ss'))"
 }
 
 $btnNeu.Add_Click({ Lade-Status })
