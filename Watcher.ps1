@@ -244,7 +244,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "18"
+$script:WatcherVersion      = "19"
 $script:WatcherVersionDatum = "10.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -3195,7 +3195,10 @@ function Pruefe-AufUpdate([bool]$manuell) {
             $wc = New-Object System.Net.WebClient
             $wc.Encoding = [System.Text.Encoding]::UTF8
             $wc.Headers.Add("Cache-Control", "no-cache")
-            $neuText = $wc.DownloadString($quelleText)
+            # GitHub haelt Dateien bis zu 5 Minuten im Zwischenspeicher - ein
+            # wechselnder Zusatz an der Adresse holt immer den neuesten Stand
+            $trenner = if ($quelleText.Contains("?")) { "&" } else { "?" }
+            $neuText = $wc.DownloadString($quelleText + $trenner + "t=" + [DateTime]::UtcNow.Ticks)
         } catch {
             if ($manuell) { & $melde "Update konnte nicht heruntergeladen werden (Internet/Adresse pruefen):`n$quelleText`n`n$($_.Exception.Message)" ([System.Windows.Forms.MessageBoxIcon]::Warning) }
             else { Schreibe-Log "Update: Download nicht moeglich ($($_.Exception.Message))" }

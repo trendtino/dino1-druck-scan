@@ -1,4 +1,4 @@
-DiNo1 Druck & Scan - Uebersicht ALLER Einstellungen (Paket 18)
+DiNo1 Druck & Scan - Uebersicht ALLER Einstellungen (Paket 19)
 ================================================================
 Installation von Dino1 GmbH und Andre Meschke
 
@@ -317,3 +317,5 @@ NEU IN PAKET 17 (Version 17)
 - Version 18: Statusdatei wird erst lokal geschrieben und dann nach HiDrive
   kopiert (direktes Schreiben lehnte HiDrive ab). Fehler stehen nur noch
   einmal im Log statt alle 5 Minuten.
+- Version 19: Update-Suche umgeht den 5-Minuten-Zwischenspeicher von
+  GitHub - eine neue Version ist sofort nach dem Hochladen verfuegbar.
