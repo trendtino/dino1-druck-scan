@@ -244,7 +244,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "21"
+$script:WatcherVersion      = "22"
 $script:WatcherVersionDatum = "11.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -2834,7 +2834,9 @@ function Zeige-OrdnerEinstellungen {
         $l = New-Object System.Windows.Forms.Label
         $l.Text = $beschriftung
         $l.Location = New-Object System.Drawing.Point(15, ($script:OrdnerY + 3))
-        $l.AutoSize = $true
+        $l.AutoSize = $false
+        $l.Size = New-Object System.Drawing.Size(172, 20)
+        $l.AutoEllipsis = $true
         $form.Controls.Add($l)
         $tb = New-Object System.Windows.Forms.TextBox
         $tb.Location = New-Object System.Drawing.Point(190, $script:OrdnerY)
@@ -2864,7 +2866,9 @@ function Zeige-OrdnerEinstellungen {
     $txtBasis    = & $neuesFeld "HiDrive Mitarbeiter-Ordner:" "ZielBasis" $true
     $txtShop     = & $neuesFeld "HiDrive Shop-Ordner:" "ShopOrdner" $true
     $txtKasse    = & $neuesFeld "HiDrive Kassen-Ordner:" "KassenOrdner" $true
-    $txtLokal    = & $neuesFeld "Lokaler Ordner (leer = Dokumente\Scans):" "LokalerOrdner" $true
+    $txtLokal    = & $neuesFeld "Lokaler Ordner (PC):" "LokalerOrdner" $true
+    $tipLokal = New-Object System.Windows.Forms.ToolTip
+    $tipLokal.SetToolTip($txtLokal, "Ziel fuer 'Nur lokal (PC)'. Leer lassen = Ordner 'Scans' in den eigenen Dokumenten.")
     $y = $script:OrdnerY + 5
 
     $lblMA = New-Object System.Windows.Forms.Label
