@@ -244,8 +244,8 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "20"
-$script:WatcherVersionDatum = "10.11.2026"
+$script:WatcherVersion      = "21"
+$script:WatcherVersionDatum = "11.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
 # Bei einem automatischen Update bleibt der Abschnitt KONFIGURATION dieses
@@ -1943,6 +1943,79 @@ function Hole-WiaBild($item, [bool]$folgeseite) {
     return $null
 }
 
+# ======================= FORTSCHRITTSFENSTER BEIM SCANNEN =======================
+# Kleines Fenster unten rechts: welche Seite gerade gescannt wird, wie viele
+# schon erfasst sind, PDF/Texterkennung. "Stoppen" beendet den Einzug nach
+# der aktuellen Seite (bisher gescannte Seiten bleiben erhalten).
+# Hinweis: Waehrend der Scanner eine Seite einzieht, ist das Fenster kurz
+# "eingefroren" - es wird zwischen den Seiten aktualisiert.
+$script:Fortschritt = $null
+$script:ScanStoppen = $false
+
+function Zeige-Fortschritt($titel, $text) {
+    try {
+        if ($null -eq $script:Fortschritt -or $script:Fortschritt.IsDisposed) {
+            $f = New-Object System.Windows.Forms.Form
+            $f.Text = "DiNo1 Druck & Scan"
+            $f.FormBorderStyle = "FixedToolWindow"
+            $f.ClientSize = New-Object System.Drawing.Size(360, 120)
+            $f.StartPosition = "Manual"
+            $bereich = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+            $f.Location = New-Object System.Drawing.Point(($bereich.Right - 380), ($bereich.Bottom - 160))
+            $f.ShowInTaskbar = $true
+            $f.ControlBox = $false
+
+            $l1 = New-Object System.Windows.Forms.Label
+            $l1.Location = New-Object System.Drawing.Point(12, 10)
+            $l1.Size = New-Object System.Drawing.Size(336, 20)
+            $l1.Font = New-Object System.Drawing.Font($l1.Font.FontFamily, 10, [System.Drawing.FontStyle]::Bold)
+            $f.Controls.Add($l1)
+
+            $l2 = New-Object System.Windows.Forms.Label
+            $l2.Location = New-Object System.Drawing.Point(12, 34)
+            $l2.Size = New-Object System.Drawing.Size(336, 36)
+            $f.Controls.Add($l2)
+
+            $balken = New-Object System.Windows.Forms.ProgressBar
+            $balken.Location = New-Object System.Drawing.Point(12, 76)
+            $balken.Size = New-Object System.Drawing.Size(230, 18)
+            $balken.Style = "Marquee"
+            $balken.MarqueeAnimationSpeed = 30
+            $f.Controls.Add($balken)
+
+            $b = New-Object System.Windows.Forms.Button
+            $b.Text = "Stoppen"
+            $b.Location = New-Object System.Drawing.Point(255, 72)
+            $b.Size = New-Object System.Drawing.Size(93, 26)
+            $b.Add_Click({
+                $script:ScanStoppen = $true
+                $this.Enabled = $false
+                $this.Text = "Wird gestoppt..."
+                Schreibe-Log "Scan: 'Stoppen' gedrueckt - Einzug endet nach der aktuellen Seite."
+            })
+            $f.Controls.Add($b)
+            $f.Tag = @{ Titel = $l1; Text = $l2; Balken = $balken; Stopp = $b }
+            $script:Fortschritt = $f
+            $f.Show()
+        }
+        $teile = $script:Fortschritt.Tag
+        $teile.Titel.Text = $titel
+        $teile.Text.Text = $text
+        $script:Fortschritt.Refresh()
+        [System.Windows.Forms.Application]::DoEvents()
+    } catch {}
+}
+
+# "Stoppen"-Knopf nur waehrend des Einzugs anbieten
+function Setze-FortschrittStopp([bool]$sichtbar) {
+    try { if ($script:Fortschritt -and -not $script:Fortschritt.IsDisposed) { $script:Fortschritt.Tag.Stopp.Visible = $sichtbar } } catch {}
+}
+
+function Schliesse-Fortschritt {
+    try { if ($script:Fortschritt -and -not $script:Fortschritt.IsDisposed) { $script:Fortschritt.Close(); $script:Fortschritt.Dispose() } } catch {}
+    $script:Fortschritt = $null
+}
+
 # Liest ueber den automatischen Einzug ALLE eingelegten Seiten nacheinander
 # ein, bis der Einzug leer ist - ohne nachzufragen und ohne Seitenzahl-
 # Eingabe. Prueft aktiv den Einzugsstatus vor jeder weiteren Seite und
@@ -1962,7 +2035,14 @@ function Scanne-MitEinzug($device, $item, $maxSeiten) {
     $seitenNr = 0
     $weiter = $true
 
+    $script:ScanStoppen = $false
+    $scanStart = Get-Date
+    Setze-FortschrittStopp $true
     while ($weiter) {
+        if ($script:ScanStoppen) {
+            Schreibe-Log "Scan nach $seitenNr Seite(n) gestoppt (Knopf 'Stoppen')."
+            break
+        }
         if ($seitenNr -gt 0) {
             $statusProp = Get-WiaEigenschaft $device.Properties $script:WIA_DPS_DOCUMENT_HANDLING_STATUS
             if ($statusProp -and (-not ([int]$statusProp.Value -band $script:WIA_EINZUG_BEREIT_FLAG))) {
@@ -1979,6 +2059,8 @@ function Scanne-MitEinzug($device, $item, $maxSeiten) {
         # Speichern (unser eigener Code) - damit sich klaeren laesst, ob eine
         # spuerbare Verzoegerung am Scanner/Treiber liegt (nicht per Software
         # beeinflussbar) oder an unserem Skript (dann behebbar).
+        $dauer = [Math]::Round(((Get-Date) - $scanStart).TotalSeconds)
+        Zeige-Fortschritt "Scanne Seite $($seitenNr + 1) ..." "Bisher erfasst: $seitenNr Seite(n)  -  $dauer s`nEinzug laeuft. 'Stoppen' beendet nach der aktuellen Seite."
         $zeitmesser = [System.Diagnostics.Stopwatch]::StartNew()
         try {
             $bild = Hole-WiaBild $item ($seitenNr -gt 0)
@@ -2005,7 +2087,9 @@ function Scanne-MitEinzug($device, $item, $maxSeiten) {
         [void]$ergebnisDateien.Add($tempBild)
         $speichernSekunden = [Math]::Round($zeitmesser.Elapsed.TotalSeconds, 1)
         Schreibe-Log "Seite $seitenNr erfasst: $tempBild (Scan/Transfer: ${transferSekunden}s, Speichern: ${speichernSekunden}s)"
+        Zeige-Fortschritt "Seite $seitenNr erfasst" "Bisher erfasst: $seitenNr Seite(n)  -  $([Math]::Round(((Get-Date) - $scanStart).TotalSeconds)) s`nPruefe, ob noch Papier im Einzug liegt ..."
     }
+    Setze-FortschrittStopp $false
 
     # WICHTIG: Komma-Operator davor! Ohne ihn wickelt PowerShell eine Liste
     # mit GENAU EINEM Element beim Zurueckgeben automatisch aus, sodass der
@@ -2025,6 +2109,7 @@ function Scanne-VonFlachbett($item) {
     $weiter = $true
 
     while ($weiter) {
+        Zeige-Fortschritt "Scanne Seite $($seitenNr + 1) (Flachbett) ..." "Bisher erfasst: $seitenNr Seite(n)"
         $zeitmesser = [System.Diagnostics.Stopwatch]::StartNew()
         $bild = Hole-WiaBild $item
         if ($null -eq $bild) {
@@ -2039,6 +2124,7 @@ function Scanne-VonFlachbett($item) {
         [void]$ergebnisDateien.Add($tempBild)
         $speichernSekunden = [Math]::Round($zeitmesser.Elapsed.TotalSeconds, 1)
         Schreibe-Log "Seite $seitenNr erfasst: $tempBild (Scan/Transfer: ${transferSekunden}s, Speichern: ${speichernSekunden}s)"
+        Zeige-Fortschritt "Seite $seitenNr erfasst" "Bisher erfasst: $seitenNr Seite(n) - naechste Seite auflegen?"
 
         $antwort = [System.Windows.Forms.MessageBox]::Show(
             "Seite $seitenNr wurde gescannt.`n`nNoch eine Seite auflegen und scannen (z.B. bei einem mehrseitigen Vertrag)?",
@@ -2131,8 +2217,10 @@ function Erzeuge-ScanPdf($seitenDateien, $dpiX, $dpiY, $schwarzweiss) {
     $mitOcr = Initialisiere-Ocr
     $seitenNr = 0
 
+    $seitenGesamt = @($seitenDateien).Count
     foreach ($f in $seitenDateien) {
         $seitenNr++
+        Zeige-Fortschritt "PDF wird erstellt ..." "Seite $seitenNr von $seitenGesamt$(if ($mitOcr) { ' (mit Texterkennung)' })$(if ([int]$script:ScanTeilNr -gt 0) { " - Dokument $($script:ScanTeilNr)" })"
         # Bei "Schwarzweiss" echte 1-Bit-Seiten erzeugen - auch wenn der Scanner
         # (z.B. eSCL-Treiber) in Graustufen geliefert hat. Klappt das nicht,
         # wird die Seite wie bisher als JPEG uebernommen.
@@ -2241,6 +2329,7 @@ function Starte-Scan {
         Speichere-ScannerEinstellungen $optionen.Scanner.Anzeige $optionen
         Schreibe-Log "Gewaehlter Scanner: '$($optionen.Scanner.Anzeige)' -> Geraet '$($optionen.Scanner.GeraeteName)'"
 
+        Zeige-Fortschritt "Verbinde mit Scanner ..." "$($optionen.Scanner.Anzeige)"
         $scanner = Verbinde-Scanner $optionen.Scanner.DeviceID
         $script:ScannerFaehigkeiten[$optionen.Scanner.DeviceID] = $scanner.Faehigkeiten
         if ($optionen.Quelle -eq "Einzug" -and -not $scanner.HatEinzug) {
@@ -2296,8 +2385,10 @@ function Starte-Scan {
         }
     } catch {
         Schreibe-Log "FEHLER beim Scannen: $_"
+        Schliesse-Fortschritt
         [System.Windows.Forms.MessageBox]::Show("Scannen fehlgeschlagen: $_`n`nPruefen, ob ein Scanner angeschlossen und in Windows eingerichtet ist.", "Fehler beim Scannen") | Out-Null
     } finally {
+        Schliesse-Fortschritt
         foreach ($f in $seitenDateien) { Remove-Item -Path $f -Force -ErrorAction SilentlyContinue }
     }
 }
@@ -2380,8 +2471,10 @@ function Starte-ScanUeberScannerFenster {
         Lege-ScanAb $seitenDateien 0 0 "Scanner-Fenster"
     } catch {
         Schreibe-Log "FEHLER beim Scannen (Scanner-Fenster): $_"
+        Schliesse-Fortschritt
         [System.Windows.Forms.MessageBox]::Show("Scannen fehlgeschlagen: $_`n`nPruefen, ob ein Scanner angeschlossen und in Windows eingerichtet ist.", "Fehler beim Scannen") | Out-Null
     } finally {
+        Schliesse-Fortschritt
         foreach ($f in $seitenDateien) { Remove-Item -Path $f -Force -ErrorAction SilentlyContinue }
         if ($tempDatei) { Remove-Item -Path $tempDatei -Force -ErrorAction SilentlyContinue }
     }
@@ -2997,6 +3090,109 @@ function Zeige-WatcherProzesse {
     }
 }
 
+# ======================= LOG UND DIAGNOSE IM SHOP-ORDNER =======================
+# Kopie der Log-Datei und (per Tray-Menue) ein Diagnosebericht landen in
+# "<Status-Ordner>\Logs" - also im Shop-Ordner auf HiDrive, damit man sie
+# ohne Zugriff auf den PC ansehen kann.
+$script:LogKopieStand = ""
+
+function Get-ShopLogOrdner {
+    if ([string]::IsNullOrWhiteSpace($StatusOrdner) -or $StatusOrdner.Trim() -eq "-") { return $null }
+    if (-not (Test-Path $StatusOrdner -ErrorAction SilentlyContinue)) { return $null }
+    $o = Join-Path $StatusOrdner "Logs"
+    if (-not (Test-Path $o)) { New-Item -ItemType Directory -Path $o -Force -ErrorAction Stop | Out-Null }
+    return $o
+}
+
+function Get-PcKennung { return (Sanitize-Dateiname "$($env:COMPUTERNAME)_$($env:USERNAME)") }
+
+# Lokal zusammenstellen, dann kopieren (direktes Schreiben lehnt HiDrive ab)
+function Kopiere-InShopOrdner($lokal, $zielName) {
+    $ordner = Get-ShopLogOrdner
+    if (-not $ordner) { throw "Shop-Ordner/Status-Ordner '$StatusOrdner' ist nicht erreichbar" }
+    $ziel = Join-Path $ordner $zielName
+    try { Copy-Item -Path $lokal -Destination $ziel -Force -ErrorAction Stop }
+    catch { Remove-Item -Path $ziel -Force -ErrorAction SilentlyContinue; Copy-Item -Path $lokal -Destination $ziel -Force -ErrorAction Stop }
+    return $ziel
+}
+
+# Alle paar Minuten: Log-Datei in den Shop-Ordner (nur wenn sie sich geaendert hat)
+function Kopiere-LogInShopOrdner {
+    try {
+        if (-not (Test-Path $LogDatei)) { return }
+        $info = Get-Item $LogDatei
+        $stand = "$($info.Length)|$($info.LastWriteTimeUtc.Ticks)"
+        if ($stand -eq $script:LogKopieStand) { return }
+        $lokal = Join-Path $ScanTempOrdner ("LogKopie_" + (Get-PcKennung) + ".txt")
+        # nur die letzten 3000 Zeilen - die volle Log-Datei kann bis zu $LogMaxMB MB gross werden
+        Get-Content -Path $LogDatei -Tail 3000 -ErrorAction Stop | Set-Content -Path $lokal -Encoding UTF8 -Force
+        [void](Kopiere-InShopOrdner $lokal ((Get-PcKennung) + "_Log.txt"))
+        Remove-Item -Path $lokal -Force -ErrorAction SilentlyContinue
+        $script:LogKopieStand = $stand
+    } catch {}
+}
+
+function Erstelle-Diagnose {
+    $z = New-Object System.Collections.Generic.List[string]
+    $abschnitt = { param($t) [void]$z.Add(""); [void]$z.Add("===== $t =====") }
+    [void]$z.Add("DiNo1 Druck & Scan - Diagnose vom $(Get-Date -Format 'dd.MM.yyyy HH:mm:ss')")
+    & $abschnitt "Programm"
+    [void]$z.Add("PC: $env:COMPUTERNAME   Benutzer: $env:USERNAME   Standort: $StandortName")
+    [void]$z.Add("$($script:EigeneVersionText) (Programmstand $($script:EigeneCodeKennung))")
+    [void]$z.Add("Watcher-Datei: $($script:EigenerPfad)")
+    [void]$z.Add("Update-Quelle: $UpdateQuelle   Updates gesperrt: $([bool](Test-Path $script:UpdateSperrDatei))")
+    & $abschnitt "System"
+    try { $os = Get-CimInstance Win32_OperatingSystem; [void]$z.Add("Windows: $($os.Caption) $($os.Version) ($($os.OSArchitecture)), gestartet $($os.LastBootUpTime)") } catch { [void]$z.Add("Windows: ?") }
+    [void]$z.Add("PowerShell: $($PSVersionTable.PSVersion)   Sprache: $((Get-Culture).Name)")
+    [void]$z.Add("Texterkennung: $(if (-not $OcrAktiv) { 'aus' } elseif ($script:OcrEngine) { 'bereit' } elseif ($script:OcrGeprueft) { 'nicht verfuegbar' } else { 'noch nicht benutzt' })")
+    & $abschnitt "Ordner"
+    foreach ($p in @(@("Mitarbeiter", $ZielBasis), @("Shop", $ShopOrdner), @("Kasse", $KassenOrdner), @("Lokal", $LokalerOrdner), @("Status", $StatusOrdner), @("Ablage", $WatchFolder), @("Ausweich", $AusweichOrdner))) {
+        [void]$z.Add(("{0,-12} {1}  -> {2}" -f $p[0], $p[1], $(if ($p[1] -and (Test-Path $p[1] -ErrorAction SilentlyContinue)) { "erreichbar" } else { "NICHT erreichbar" })))
+    }
+    try {
+        $zs = Ermittle-Zustand
+        [void]$z.Add("Nicht uebertragen: $($zs.NichtUebertragen)   Uebersprungen: $($zs.Uebersprungen)   Wartend in Ablage: $($zs.WartendInAblage)")
+    } catch {}
+    & $abschnitt "Mitarbeiter"
+    foreach ($k in $MitarbeiterOrdner.Keys) {
+        $o = Join-Path $ZielBasis $MitarbeiterOrdner[$k]
+        [void]$z.Add(("{0} -> {1}  ({2})" -f $k, $MitarbeiterOrdner[$k], $(if (Test-Path $o -ErrorAction SilentlyContinue) { "ok" } else { "FEHLT" })))
+    }
+    & $abschnitt "Laufende Watcher"
+    try { foreach ($w in (Ermittle-WatcherProzesse)) { [void]$z.Add("PID $($w.Pid)  Start $($w.Start)  Benutzer $($w.Benutzer)  $($w.Datei)$(if ($w.Eigener) { '  <- dieser' })") } } catch { [void]$z.Add("?") }
+    & $abschnitt "Scanner (WIA)"
+    try {
+        $dm = New-Object -ComObject WIA.DeviceManager
+        foreach ($d in $dm.DeviceInfos) {
+            $name = "?"; try { $name = $d.Properties.Item("Name").Value } catch {}
+            [void]$z.Add("$($d.DeviceID)  Name='$name'  Typ=$($d.Type)")
+        }
+    } catch { [void]$z.Add("WIA nicht abfragbar: $($_.Exception.Message)") }
+    [void]$z.Add("Zuletzt benutzt: $(try { (Get-Content $script:LetzterScannerDatei -Raw -ErrorAction Stop).Trim() } catch { '-' })")
+    & $abschnitt "Drucker"
+    try { foreach ($d in @(Get-CimInstance Win32_Printer)) { [void]$z.Add("$($d.Name)  (Anschluss $($d.PortName))") } } catch { [void]$z.Add("?") }
+    & $abschnitt "Log (letzte 200 Zeilen)"
+    try { foreach ($l in @(Get-Content $LogDatei -Tail 200 -ErrorAction Stop)) { [void]$z.Add($l) } } catch { [void]$z.Add("(keine Log-Datei)") }
+    return $z
+}
+
+function Sende-DiagnoseAnShop {
+    $lokal = Join-Path $ScanTempOrdner ("Diagnose_" + (Get-PcKennung) + ".txt")
+    try {
+        Erstelle-Diagnose | Set-Content -Path $lokal -Encoding UTF8 -Force
+        $ziel = Kopiere-InShopOrdner $lokal ((Get-PcKennung) + "_Diagnose_" + (Get-Date -Format 'yyyy-MM-dd_HHmm') + ".txt")
+        Kopiere-LogInShopOrdner
+        Schreibe-Log "Diagnose in den Shop-Ordner gelegt: $ziel"
+        [System.Windows.Forms.MessageBox]::Show("Diagnose und Log liegen jetzt im Shop-Ordner:`n`n$ziel", "Diagnose", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+    } catch {
+        Schreibe-Log "FEHLER: Diagnose konnte nicht in den Shop-Ordner gelegt werden: $($_.Exception.Message)"
+        $antwort = [System.Windows.Forms.MessageBox]::Show("Die Diagnose konnte nicht in den Shop-Ordner gelegt werden:`n$($_.Exception.Message)`n`nStattdessen lokal oeffnen?", "Diagnose", [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Warning)
+        if ($antwort -eq [System.Windows.Forms.DialogResult]::Yes -and (Test-Path $lokal)) { Start-Process notepad.exe -ArgumentList "`"$lokal`"" }
+        return
+    }
+    Remove-Item -Path $lokal -Force -ErrorAction SilentlyContinue
+}
+
 # ======================= TRAY-SYMBOL =======================
 
 $trayIcon = New-Object System.Windows.Forms.NotifyIcon
@@ -3061,6 +3257,11 @@ $menuDoppelt = $menu.Items.Add("Laufende Watcher pruefen")
 $menuDoppelt.Add_Click({
     $timer.Stop()
     try { Zeige-WatcherProzesse } finally { try { $timer.Start() } catch {} }
+})
+$menuDiagnose = $menu.Items.Add("Diagnose in den Shop-Ordner legen")
+$menuDiagnose.Add_Click({
+    $timer.Stop()
+    try { Sende-DiagnoseAnShop } finally { try { $timer.Start() } catch {} }
 })
 $menuInfo = $menu.Items.Add("Status: Log-Datei oeffnen")
 $menuInfo.Add_Click({ Start-Process -FilePath "notepad.exe" -ArgumentList "`"$LogDatei`"" })
@@ -3407,6 +3608,7 @@ function Pruefe-Zustand {
         Warne-Einmal "nicht_uebertragen" "Dokumente nicht uebertragen" "$($z.NichtUebertragen) Dokument(e) liegen noch in '$AusweichOrdner' und konnten nicht automatisch nach HiDrive uebertragen werden. Klicken zum Oeffnen." $AusweichOrdner
     }
     Schreibe-Status $z
+    Kopiere-LogInShopOrdner
 }
 
 function Schreibe-Status($zustand) {

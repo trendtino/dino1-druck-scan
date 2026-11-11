@@ -1,4 +1,4 @@
-DiNo1 Druck & Scan - Uebersicht ALLER Einstellungen (Paket 20)
+DiNo1 Druck & Scan - Uebersicht ALLER Einstellungen (Paket 21)
 ================================================================
 Installation von Dino1 GmbH und Andre Meschke
 
@@ -195,6 +195,7 @@ Ordner anpassen...                    HiDrive-Ordner, Mitarbeiter, lokalen
 Ablage-Ordner oeffnen                 oeffnet C:\PaperPortErsatz\Ablage
 Laufende Watcher pruefen              zeigt alle laufenden Watcher dieses PCs,
                                       doppelte koennen beendet werden
+Diagnose in den Shop-Ordner legen     Bericht + Log nach HiDrive (Shop-Ordner)
 Status: Log-Datei oeffnen             Protokoll ansehen
 Nach Updates suchen                   sofort pruefen (sonst ca. alle 10 Min.)
 Vorherige Version wiederherstellen    macht das letzte Update rueckgaengig
@@ -324,3 +325,10 @@ NEU IN PAKET 17 (Version 17)
 - Version 20: Statusdateien liegen jetzt im Shop-Ordner
   ("<Shop-Ordner>\DiNo1-Druck-Scan-Status"). Uebersicht.cmd sammelt sie
   aus allen Shops.
+- Version 21: Fortschrittsfenster beim Scannen (unten rechts): welche Seite
+  gerade gescannt wird, wie viele erfasst sind, PDF/Texterkennung. Knopf
+  "Stoppen" beendet den Einzug nach der aktuellen Seite.
+  Log-Datei (letzte 3000 Zeilen) wird alle ~5 Minuten nach
+  "<Shop-Ordner>\DiNo1-Druck-Scan-Status\Logs\<PC>_<Benutzer>_Log.txt"
+  kopiert. Tray -> "Diagnose in den Shop-Ordner legen" erstellt dort einen
+  Diagnosebericht. Diagnose.cmd legt seinen Bericht ebenfalls dort ab.

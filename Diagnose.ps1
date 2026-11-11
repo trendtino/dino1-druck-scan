@@ -125,4 +125,19 @@ if ($pr) {
 } else { Z "(uebersprungen, Watcher.ps1 nicht installiert)" }
 
 $zeilen | Set-Content -Path $bericht -Encoding UTF8
+
+# Zusaetzlich in den Shop-Ordner auf HiDrive legen ("<Shop-Ordner>\DiNo1-Druck-Scan-Status\Logs")
+try {
+    $wt = [System.IO.File]::ReadAllText("C:\PaperPortErsatz\Watcher.ps1")
+    $statusOrdner = ""
+    if ($wt -match '(?m)^\$StatusOrdner\s*=\s*"([^"]+)"') { $statusOrdner = $matches[1] }
+    elseif ($wt -match '(?m)^\$ShopOrdner\s*=\s*"([^"]+)"') { $statusOrdner = Join-Path $matches[1] "DiNo1-Druck-Scan-Status" }
+    if ($statusOrdner -and $statusOrdner -ne "-" -and (Test-Path (Split-Path $statusOrdner -Parent))) {
+        $logOrdner = Join-Path $statusOrdner "Logs"
+        if (-not (Test-Path $logOrdner)) { New-Item -ItemType Directory -Path $logOrdner -Force | Out-Null }
+        $ziel = Join-Path $logOrdner ("$($env:COMPUTERNAME)_$($env:USERNAME)_Diagnose_" + (Get-Date -Format 'yyyy-MM-dd_HHmm') + ".txt")
+        Copy-Item -Path $bericht -Destination $ziel -Force -ErrorAction Stop
+        Write-Host "Diagnose zusaetzlich abgelegt: $ziel"
+    }
+} catch { Write-Host "Diagnose konnte nicht in den Shop-Ordner gelegt werden: $($_.Exception.Message)" }
 Start-Process notepad.exe -ArgumentList "`"$bericht`""
