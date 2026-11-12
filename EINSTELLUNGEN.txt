@@ -381,3 +381,21 @@ NEU IN PAKET 17 (Version 17)
   Dino-Symbol, "DiNo1 neu starten" ein eigenes orangefarbenes Neustart-Symbol
   (auch bereits vorhandene Verknuepfungen werden umgestellt).
 - Version 34: Fusszeile im Programmfenster "(c) DiNo1 GmbH - Andre Meschke".
+- Version 35:
+  * Mitarbeiterliste zentral: Datei "DiNo1-Mitarbeiter.txt" im Shop-Ordner
+    (je Zeile "Name = Ordnername"). Jeder PC uebernimmt beim ersten Start
+    einmalig seine bisherigen Mitarbeiter dorthin. Danach gilt fuer alle PCs
+    des Shops nur noch diese Liste ("Ordner anpassen" speichert dort).
+  * Selbstheilung: Waechter.ps1 startet den Watcher neu, wenn er abstuerzt
+    oder laenger als 10 Minuten haengt (nicht nach "Watcher beenden").
+  * Suche: Vorschau der ersten Seite rechts, Rechtsklick/Knoepfe fuer
+    Umbenennen, Verschieben (Shop, Kasse, Mitarbeiter) und Zusammenfuegen.
+  * PDFs zusammenfuegen: Fenster mit Drag & Drop (Kachel/Tray). Automatisch:
+    "Name 1", "Name 2" (auch "zwei", "Teil 3") am selben Tag im selben Ordner
+    werden ca. 2 Minuten nach dem letzten Teil zu "Name.pdf"; Einzelteile
+    landen im Unterordner "Einzelteile". Teil 1 muss dabei sein.
+  * Tagesbericht ab 18:00 am Tray-Symbol (Klick = Liste), Kopie im
+    Status-Ordner unter "Berichte". Tray/Kachel "Tagesbericht".
+  * Altbestand: alte PDFs im Shop- und in den Mitarbeiter-Ordnern werden im
+    Hintergrund (niedrige Prioritaet) gelesen und durchsuchbar gemacht.
+  * Setup im neuen Design mit Logo.

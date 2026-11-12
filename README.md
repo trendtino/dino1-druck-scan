@@ -74,6 +74,7 @@ Jeder PC prüft beim Start und etwa alle 10 Minuten, ob sich der Programmcode de
 
 | Version | Neu |
 |---|---|
+| 35 | Zentrale Mitarbeiterliste, Selbstheilung (Wächter), Suche mit Vorschau/Verschieben/Umbenennen, PDFs zusammenfügen (Drag & Drop + automatisch), Tagesbericht, Altbestand durchsuchbar, Setup im neuen Design |
 | 34 | Fußzeile „© DiNo1 GmbH – Andre Meschke“ im Programmfenster |
 | 33 | Neue Symbole für die Desktop-Verknüpfungen (Dino, Neustart-Pfeil) |
 | 32 | Neues Design mit DiNo1-Logo, Kacheln mit Symbolen, Orange als Akzentfarbe, Dino-Symbol für Tray und Verknüpfungen |
