@@ -244,7 +244,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "40"
+$script:WatcherVersion      = "41"
 $script:WatcherVersionDatum = "12.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -2771,6 +2771,15 @@ function Verarbeite-Ablage {
                 Schreibe-Log "HINWEIS: Ordner '$zielOrdner' existierte noch nicht und wurde neu angelegt - bitte pruefen."
             }
 
+            # Gedruckte PDFs ohne Text (z. B. Vertraege, die nur als Bild in der
+            # PDF stehen): Texterkennung einbauen, damit Provitra und die Suche
+            # den Text direkt lesen koennen. PDFs mit Text bleiben unveraendert.
+            $suchText = $(if ($vorschau) { [string]$vorschau.Text } else { "" })
+            if ($OcrAktiv -and $script:DruckTexterkennung -and $eingabe.Ziel -ne "Lokal" -and -not (Pdf-HatText $datei.FullName)) {
+                $ocrText = Ergaenze-PdfText $datei.FullName
+                if ($ocrText) { $suchText = $ocrText }
+            }
+
             # Teile wie "Thomas Meier 1" erst in den Unterordner "Teile_warten":
             # Provitra holt sie dort nicht ab. Nach dem Zusammenfuegen (oder wenn
             # es nichts zum Zusammenfuegen gibt) kommen sie in den Ordner selbst.
@@ -2788,7 +2797,7 @@ function Verarbeite-Ablage {
                 Move-Item -Path $datei.FullName -Destination $zielpfad -Force
                 Schreibe-Log "Abgelegt ($($eingabe.Ziel)): $zielpfad"
                 Remove-Item -Path (Get-OcrTextDatei $datei.Name) -Force -ErrorAction SilentlyContinue
-                Merke-FuerSuche $eingabe $zielpfad $(if ($vorschau) { $vorschau.Text } else { "" })
+                Merke-FuerSuche $eingabe $zielpfad $suchText
                 Kopiere-SuchindexInShop
                 Merke-ZusammenKandidat $zielpfad
                 # Hinweis: Seit Einfuehrung von Ermittle-DateiSchluessel (Pfad +
@@ -4562,6 +4571,72 @@ function Hole-Vorschaubild($pdfPfad) {
 
 # Erzeugt eine (durchsuchbare) PDF aus Seitenbildern an einem beliebigen Ort.
 # $seiten: Objekte mit Png + Dpi. Rueckgabe: erkannter Gesamttext.
+# ----- Texterkennung fuer gedruckte PDFs (Dino1 Drucker) -----
+$script:DruckTexterkennung = $true
+$script:DruckOcrBreitePx   = 2200    # ca. 265 dpi bei A4 - gut lesbar auch bei Kleingedrucktem
+
+# Hat die PDF schon Text? (Text braucht Schriften -> "/Font" in der Datei,
+# ggf. in gepackten Objekt-Streams). Im Zweifel $true = nichts veraendern.
+function Pdf-HatText([string]$pfad) {
+    try {
+        $bytes = [System.IO.File]::ReadAllBytes($pfad)
+        $s = [System.Text.Encoding]::GetEncoding(28591).GetString($bytes)
+        if ($s.Contains("/Font")) { return $true }
+        if (-not $s.Contains("/ObjStm")) { return $false }
+        $i = 0
+        while (($i = $s.IndexOf("stream", $i)) -ge 0) {
+            $start = $i + 6
+            if ($i -ge 3 -and $s.Substring($i - 3, 3) -eq "end") { $i = $start; continue }
+            if ($start -lt $s.Length -and $s[$start] -eq [char]13) { $start++ }
+            if ($start -lt $s.Length -and $s[$start] -eq [char]10) { $start++ }
+            $ende = $s.IndexOf("endstream", $start)
+            if ($ende -lt 0) { break }
+            $i = $ende + 9
+            if ($ende - $start -lt 3) { continue }
+            try {
+                $ms = New-Object System.IO.MemoryStream($bytes, ($start + 2), ($ende - $start - 2))
+                $ds = New-Object System.IO.Compression.DeflateStream($ms, [System.IO.Compression.CompressionMode]::Decompress)
+                $sr = New-Object System.IO.StreamReader($ds, [System.Text.Encoding]::GetEncoding(28591))
+                $inhalt = $sr.ReadToEnd()
+                $sr.Dispose()
+                if ($inhalt.Contains("/Font")) { return $true }
+            } catch {}
+        }
+        return $false
+    } catch {
+        return $true
+    }
+}
+
+# Baut die PDF mit Texterkennung neu auf (Seiten als Bild + unsichtbarer Text).
+# Rueckgabe: erkannter Text oder "" (dann bleibt die Datei unveraendert).
+function Ergaenze-PdfText([string]$pfad) {
+    $seiten = $null
+    $temp = Join-Path $ScanTempOrdner ("DruckOcr_" + [guid]::NewGuid().ToString("N") + ".pdf")
+    try {
+        Zeige-Fortschritt "Texterkennung ..." "Der Ausdruck enthaelt keinen Text - Text wird erkannt."
+        $seiten = Rendere-PdfSeiten $pfad $script:DruckOcrBreitePx 0
+        if (-not $seiten -or @($seiten).Count -eq 0) { return "" }
+        $text = Schreibe-PdfAusSeiten $seiten $temp "Texterkennung fuer den Ausdruck ..."
+        if (-not $text -or -not $text.Trim()) {
+            Remove-Item -Path $temp -Force -ErrorAction SilentlyContinue
+            Schreibe-Log "Druck ohne Text, Texterkennung fand nichts: $pfad"
+            return ""
+        }
+        Remove-Item -LiteralPath $pfad -Force -ErrorAction Stop
+        Move-Item -Path $temp -Destination $pfad -ErrorAction Stop
+        Schreibe-Log "Texterkennung fuer Druck ergaenzt ($(@($seiten).Count) Seite(n)): $pfad"
+        return $text
+    } catch {
+        Schreibe-Log "HINWEIS: Texterkennung fuer Druck fehlgeschlagen: $($_.Exception.Message)"
+        Remove-Item -Path $temp -Force -ErrorAction SilentlyContinue
+        return ""
+    } finally {
+        if ($seiten) { Entferne-SeitenBilder $seiten }
+        Schliesse-Fortschritt
+    }
+}
+
 function Schreibe-PdfAusSeiten($seiten, $zielPfad, [string]$fortschrittText = "PDF wird erstellt ...") {
     $jpegs  = New-Object System.Collections.Generic.List[byte[]]
     $sw     = New-Object System.Collections.Generic.List[bool]

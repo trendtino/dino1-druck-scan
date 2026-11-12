@@ -425,3 +425,7 @@ NEU IN PAKET 17 (Version 17)
   "Teile_warten" (holt Provitra nicht ab), werden zusammengefuegt und erst dann
   im Ordner abgelegt. Gibt es nichts zum Zusammenfuegen, kommt das Teil nach
   2 Minuten trotzdem in den Ordner.
+- Version 41: Texterkennung fuer Ausdrucke ueber den Dino1 Drucker. Enthaelt die
+  gedruckte PDF keinen Text (z. B. Vertrag nur als Bild), wird sie vor dem
+  Ablegen mit unsichtbarem Text neu aufgebaut (ca. 265 dpi). PDFs mit Text
+  bleiben unveraendert. Abschalten: $script:DruckTexterkennung = $false.
