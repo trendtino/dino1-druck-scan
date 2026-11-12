@@ -74,6 +74,7 @@ Jeder PC prüft beim Start und etwa alle 10 Minuten, ob sich der Programmcode de
 
 | Version | Neu |
 |---|---|
+| 32 | Neues Design mit DiNo1-Logo, Kacheln mit Symbolen, Orange als Akzentfarbe, Dino-Symbol für Tray und Verknüpfungen |
 | 31 | Suche nur in Shop- und Mitarbeiter-Ordnern, läuft im Hintergrund (kein Einfrieren); Desktop-Verknüpfung „DiNo1 neu starten“ |
 | 30 | Kassen-Ordner darf auch der Jahresordner sein (`Kasse\2026`) |
 | 29 | Kassenbelege nach Jahr und Monat: `Kasse\2026\11 November` |

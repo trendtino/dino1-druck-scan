@@ -372,3 +372,8 @@ NEU IN PAKET 17 (Version 17)
   ein, Treffer erscheinen nach und nach, Knopf "Stopp" bricht ab. Neu auf
   dem Desktop: Verknuepfung "DiNo1 neu starten" (beendet einen haengenden
   Watcher und startet ihn neu). Zusaetzlich liegt DiNo1-Neustart.cmd im Paket.
+- Version 32: Neues Design mit DiNo1-Logo. Programmfenster mit Logo-Kopf,
+  orangefarbenen Kacheln mit Symbolen und Status-Karte mit farbigen Punkten.
+  Alle Fenster haben flache Knoepfe, eine helle Flaeche und Orange als
+  Akzentfarbe. Tray-Symbol, Fenstersymbol und Verknuepfungen zeigen jetzt
+  den DiNo1-Dino.
