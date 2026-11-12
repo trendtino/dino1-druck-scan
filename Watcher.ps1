@@ -244,7 +244,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "45"
+$script:WatcherVersion      = "46"
 $script:WatcherVersionDatum = "12.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -5947,6 +5947,27 @@ $script:MiniaturOrdner = Join-Path $script:DatenOrdner "Miniaturen"
 $script:AvMiniB = 132
 $script:AvMiniH = 176
 
+# Mehr Platz je Eintrag, damit lange Dateinamen ganz zu sehen sind
+function Setze-ListenAbstand($liste, [int]$b, [int]$h) {
+    try {
+        if (-not ("PpeListe" -as [type])) {
+            Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class PpeListe {
+    [DllImport("user32.dll")]
+    public static extern IntPtr SendMessage(IntPtr h, int msg, IntPtr w, IntPtr l);
+    public static void Abstand(IntPtr h, int cx, int cy) {
+        SendMessage(h, 0x1035, IntPtr.Zero, (IntPtr)((cy << 16) | (cx & 0xFFFF)));
+    }
+}
+"@
+        }
+        [PpeListe]::Abstand($liste.Handle, $b, $h)
+        $liste.Refresh()
+    } catch {}
+}
+
 # Eine Seite als Bitmap. Rueckgabe @{ Bild; Anzahl; Index } oder $null
 function Rendere-PdfSeite([string]$pdfPfad, [int]$index, [int]$breitePx) {
     if (-not (Initialisiere-WinRT)) { return $null }
@@ -6061,6 +6082,7 @@ function Av-NeuerKnoten([string]$text, [string]$pfad) {
 
 function Av-LadeOrdner([string]$ordner) {
     Av-StoppeSuche
+    Av-EntferneOrdnerMarke
     $script:AvSuchbegriff = $null
     $script:AvOrdner = $ordner
     $script:AvMiniTimer.Stop()
@@ -6078,7 +6100,7 @@ function Av-LadeOrdner([string]$ordner) {
         $gesamt = $dateien.Count
         if ($dateien.Count -gt 500) { $dateien = $dateien[0..499] }
         foreach ($f in $dateien) {
-            $it = New-Object System.Windows.Forms.ListViewItem($f.BaseName)
+            $it = New-Object System.Windows.Forms.ListViewItem($f.Name)
             $it.ImageKey = "_leer"
             $it.Tag = $f.FullName
             $it.ToolTipText = $f.Name + "`n" + $f.LastWriteTime.ToString("dd.MM.yyyy HH:mm")
@@ -6412,14 +6434,25 @@ function Av-FindeKnoten([string]$dir) {
     return $knoten
 }
 
-# Suchtreffer: Ordner links markieren, ohne ihn zu laden
+# Suchtreffer: Ordner links blau hinterlegen, ohne ihn zu laden
 $script:AvBaumSync = $false
+$script:AvTrefferKnoten = $null
+function Av-EntferneOrdnerMarke {
+    if ($script:AvTrefferKnoten) {
+        try { $script:AvTrefferKnoten.BackColor = [System.Drawing.Color]::Empty; $script:AvTrefferKnoten.ForeColor = [System.Drawing.Color]::Empty } catch {}
+        $script:AvTrefferKnoten = $null
+    }
+}
 function Av-MarkiereOrdner([string]$pfad) {
     try {
         $k = Av-FindeKnoten ([System.IO.Path]::GetDirectoryName($pfad))
+        Av-EntferneOrdnerMarke
         if (-not $k) { return }
         $script:AvBaumSync = $true
-        $script:AvBaum.SelectedNode = $k
+        $script:AvBaum.SelectedNode = $null   # sonst malt Windows die alte Auswahl grau darueber
+        $k.BackColor = [System.Drawing.Color]::FromArgb(0, 120, 215)
+        $k.ForeColor = [System.Drawing.Color]::White
+        $script:AvTrefferKnoten = $k
         $k.EnsureVisible()
     } catch {} finally { $script:AvBaumSync = $false }
 }
@@ -6514,10 +6547,10 @@ function Av-SucheTick {
         $leaf = [System.IO.Path]::GetFileName([System.IO.Path]::GetDirectoryName($pfad))
         if ($leaf -like "Archiv*") { $wo = "$wo, $leaf" }
         elseif (-not $wo) { $wo = $leaf }
-        $it = New-Object System.Windows.Forms.ListViewItem(($name + "  (" + $wo + ")"))
+        $it = New-Object System.Windows.Forms.ListViewItem([System.IO.Path]::GetFileName($pfad))
         $it.ImageKey = "_leer"
         $it.Tag = $pfad
-        $it.ToolTipText = ([System.IO.Path]::GetDirectoryName($pfad) + "`n" + [string]$zeile[0] + "`n" + [string]$zeile[3])
+        $it.ToolTipText = ("Ablage: " + $wo + "`n" + [System.IO.Path]::GetDirectoryName($pfad) + "`n" + [string]$zeile[3])
         if (-not $zeile[5]) { $it.ForeColor = [System.Drawing.Color]::Gray }
         [void]$script:AvListe.Items.Add($it)
         $s.Anzahl++
@@ -6995,6 +7028,7 @@ function Zeige-DokumenteAnsehen {
         $script:AvBtnSpeichern.FlatAppearance.BorderColor = $script:FarbeAkzent
         if ($script:SymbolSchrift) { $script:AvBtnSpeichern.Image = Zeichne-Symbol 0xE74E 18 ([System.Drawing.Color]::White) }
         $script:AvFilter.Focus()
+        Setze-ListenAbstand $script:AvListe 210 250
         try { $sc1.SplitterDistance = 250 } catch {}
         try { $sc2.SplitterDistance = [Math]::Max(300, $sc2.Width - 520) } catch {}
         if ($ersterKnoten) { $script:AvBaum.SelectedNode = $ersterKnoten } else { Av-LadeOrdner "" }

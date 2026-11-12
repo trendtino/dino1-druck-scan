@@ -82,6 +82,7 @@ Jeder PC prüft beim Start und etwa alle 10 Minuten, ob sich der Programmcode de
 | 43 | Ansicht: Drehen, Seite entfernen, Anhängen per Ziehen; Programmfenster gruppiert |
 | 44 | Drehen erst in der Vorschau, dann speichern; Suche in der Ansicht; Fehler ins Log |
 | 45 | Suchtreffer zeigen ihren Ordner (Baum markiert, Ort am Bild) |
+| 46 | Trefferordner blau markiert, kompletter Dateiname in der Ansicht |
 | 37 | Admin-Übersicht nur auf freigeschalteten PCs |
 | 36 | Ein Ordner `DiNo1-Druck-Scan` je Shop für alles; Admin-Übersicht aller Shops (Nutzer + Tagesberichte, Abendmeldung) |
 | 35 | Zentrale Mitarbeiterliste, Selbstheilung (Wächter), Suche mit Vorschau/Verschieben/Umbenennen, PDFs zusammenfügen (Drag & Drop + automatisch), Tagesbericht, Altbestand durchsuchbar, Setup im neuen Design |

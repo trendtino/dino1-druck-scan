@@ -449,3 +449,5 @@ NEU IN PAKET 17 (Version 17)
 - Version 45: Suchtreffer zeigen den Ablageort am Bild ("Meier (Andre Meschke)"),
   der Ordner wird links im Baum markiert. Rechtsklick "Ordner hier anzeigen"
   oeffnet den Ordner mit der Datei.
+- Version 46: Ordner des Suchtreffers wird links blau hinterlegt; unter den
+  Bildern steht der komplette Dateiname (mehr Platz je Eintrag).
