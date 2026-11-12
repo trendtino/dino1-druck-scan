@@ -244,7 +244,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "38"
+$script:WatcherVersion      = "39"
 $script:WatcherVersionDatum = "12.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -4665,21 +4665,41 @@ function Frage-Text($titel, $frage, $vorgabe, [bool]$verdeckt = $false) {
 # Dateinamen und arbeitet dann nur die Liste ab (kein Tray-Symbol).
 $script:AltbestandIndex   = Join-Path $script:DatenOrdner "Suchindex_Altbestand.jsonl"
 $script:IndexierSkript    = Join-Path $script:DatenOrdner "DiNo1-Indexierung.ps1"
+$script:IndexFortschrittDatei = Join-Path $script:DatenOrdner "Indexierung_Fortschritt.txt"
+$script:IndexAbbruchDatei     = Join-Path $script:DatenOrdner "Indexierung_Abbrechen.txt"
 $script:IndexMutexName    = "Local\DiNo1DruckScanIndexierung"
 $script:IndexSeiten       = 3          # so viele Seiten je PDF werden gelesen
 $script:IndexLetzterStart = [DateTime]::MinValue
+$script:IndexStartTicks   = [long]0
 
+# Fortschritt fuer das Fenster mit Ladebalken:
+# Zustand|fertig|gesamt|StartTicks|neu|fehler|aktuelle Datei
+function Schreibe-IndexFortschritt([string]$zustand, [int]$fertig, [int]$gesamt, [int]$neu, [int]$fehler, [string]$datei) {
+    try {
+        $zeile = ($zustand + "|" + $fertig + "|" + $gesamt + "|" + $script:IndexStartTicks + "|" + $neu + "|" + $fehler + "|" + $datei)
+        [System.IO.File]::WriteAllText($script:IndexFortschrittDatei, $zeile, (New-Object System.Text.UTF8Encoding($false)))
+    } catch {}
+}
+
+function Laeuft-AltbestandIndexierung {
+    try { $m = [System.Threading.Mutex]::OpenExisting($script:IndexMutexName); $m.Dispose(); return $true } catch { return $false }
+}
+
+# Rueckgabe: $true wenn die Indexierung jetzt laeuft (neu gestartet oder schon aktiv)
 function Starte-AltbestandIndexierung {
     try {
-        $laeuft = $false
-        try { $m = [System.Threading.Mutex]::OpenExisting($script:IndexMutexName); $m.Dispose(); $laeuft = $true } catch {}
-        if ($laeuft) { return }
-        if (-not $OcrAktiv) { return }
+        if (Laeuft-AltbestandIndexierung) { return $true }
+        if (-not $OcrAktiv) { return $false }
+        Remove-Item -Path $script:IndexAbbruchDatei -Force -ErrorAction SilentlyContinue
+        $script:IndexStartTicks = (Get-Date).Ticks
+        Schreibe-IndexFortschritt "Start" 0 0 0 0 ""
         Copy-Item -Path $script:EigenerPfad -Destination $script:IndexierSkript -Force -ErrorAction Stop
         Start-Process -FilePath "conhost.exe" -ArgumentList ("--headless powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"" + $script:IndexierSkript + "`"")
         $script:IndexLetzterStart = Get-Date
+        return $true
     } catch {
         Schreibe-Log "HINWEIS: Altbestand-Indexierung konnte nicht gestartet werden: $($_.Exception.Message)"
+        return $false
     }
 }
 
@@ -4720,13 +4740,20 @@ function Lese-BekanntePfade {
 function Fuehre-AltbestandIndexierungAus {
     try { (Get-Process -Id $PID).PriorityClass = [System.Diagnostics.ProcessPriorityClass]::Idle } catch {}
     Schreibe-Log "Indexierung Altbestand: gestartet."
+    Remove-Item -Path $script:IndexAbbruchDatei -Force -ErrorAction SilentlyContinue
+    $script:IndexStartTicks = (Get-Date).Ticks
+    Schreibe-IndexFortschritt "Suche" 0 0 0 0 ""
     $statusPfad = if ($StatusOrdner -and $StatusOrdner -ne "-") { $StatusOrdner.TrimEnd('\') } else { "" }
     # Mitarbeiter-Ordner -> Name (fuer die Anzeige "Mitarbeiter: ...")
     $ordnerZuName = @{}
     foreach ($k in @($MitarbeiterOrdner.Keys)) { $ordnerZuName[(Join-Path $ZielBasis ([string]$MitarbeiterOrdner[$k])).TrimEnd('\').ToLowerInvariant()] = $k }
 
+    # Schritt 1: alle noch nicht erfassten PDFs sammeln (damit der Ladebalken
+    # weiss, wie viele es insgesamt sind)
     $bekannt = Lese-BekanntePfade
-    $neu = 0; $fehler = 0; $seitLetzterKopie = 0
+    $liste = New-Object System.Collections.Generic.List[object]
+    $gesehen = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::OrdinalIgnoreCase)
+    $letzteMeldung = [DateTime]::MinValue
     foreach ($wurzel in (Get-SuchOrdner)) {
         if (-not (Test-Path $wurzel -ErrorAction SilentlyContinue)) { continue }
         $mitarbeiter = ""
@@ -4735,6 +4762,7 @@ function Fuehre-AltbestandIndexierungAus {
         $stapel = New-Object System.Collections.Generic.Stack[string]
         $stapel.Push($wurzel)
         while ($stapel.Count -gt 0) {
+            if (Test-Path $script:IndexAbbruchDatei) { break }
             $dir = $stapel.Pop()
             try {
                 foreach ($u in [System.IO.Directory]::GetDirectories($dir)) {
@@ -4745,46 +4773,258 @@ function Fuehre-AltbestandIndexierungAus {
             $dateien = @()
             try { $dateien = [System.IO.Directory]::GetFiles($dir, "*.pdf") } catch {}
             foreach ($f in $dateien) {
-                if ($bekannt.Contains($f)) { continue }
-                [void]$bekannt.Add($f)
-                $text = ""
-                $seiten = $null
-                try {
-                    $seiten = Rendere-PdfSeiten $f 1240 $script:IndexSeiten
-                    $sb = New-Object System.Text.StringBuilder
-                    foreach ($s in $seiten) {
-                        $erkannt = Erkenne-Text $s.Png
-                        if ($erkannt) { [void]$sb.AppendLine($erkannt.Text) }
-                    }
-                    $text = $sb.ToString()
-                } catch {
-                    $fehler++
-                } finally {
-                    if ($seiten) { Entferne-SeitenBilder $seiten }
-                }
-                if ($text.Length -gt 30000) { $text = $text.Substring(0, 30000) }
-                $datum = ""
-                try { $datum = [System.IO.File]::GetLastWriteTime($f).ToString("yyyy-MM-dd") } catch {}
-                $name = [System.IO.Path]::GetFileNameWithoutExtension($f)
-                if ($name -match '^(\d{4}-\d{2}-\d{2})_(.*)$') { $datum = $matches[1]; $name = $matches[2] }
-                $eintrag = [ordered]@{
-                    Zeit = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'); Datum = $datum; Ziel = $ziel
-                    Mitarbeiter = $mitarbeiter; Bezeichnung = $name; Pfad = $f; PC = $env:COMPUTERNAME
-                    Text = $text; Quelle = "Altbestand"
-                }
-                try { [System.IO.File]::AppendAllText($script:AltbestandIndex, (($eintrag | ConvertTo-Json -Compress -Depth 2) + "`r`n"), (New-Object System.Text.UTF8Encoding($false))) } catch {}
-                $neu++; $seitLetzterKopie++
-                if ($seitLetzterKopie -ge 20) {
-                    Kopiere-AltbestandInShop; $seitLetzterKopie = 0
-                    # Was andere PCs inzwischen erledigt haben, nicht doppelt machen
-                    foreach ($p in (Lese-BekanntePfade)) { [void]$bekannt.Add($p) }
-                }
-                Start-Sleep -Milliseconds 200
+                if ($bekannt.Contains($f) -or -not $gesehen.Add($f)) { continue }
+                [void]$liste.Add([pscustomobject]@{ Pfad = $f; Ziel = $ziel; Mitarbeiter = $mitarbeiter })
+            }
+            if (((Get-Date) - $letzteMeldung).TotalSeconds -ge 1) {
+                Schreibe-IndexFortschritt "Suche" $liste.Count 0 0 0 $dir
+                $letzteMeldung = Get-Date
             }
         }
     }
+
+    # Schritt 2: Text erkennen und eintragen
+    $gesamt = $liste.Count
+    $neu = 0; $fehler = 0; $fertig = 0; $seitLetzterKopie = 0
+    $abgebrochen = $false
+    $script:IndexStartTicks = (Get-Date).Ticks
+    Schreibe-IndexFortschritt "Laeuft" 0 $gesamt 0 0 ""
+    foreach ($e in $liste) {
+        if (Test-Path $script:IndexAbbruchDatei) { $abgebrochen = $true; break }
+        $f = $e.Pfad
+        Schreibe-IndexFortschritt "Laeuft" $fertig $gesamt $neu $fehler $f
+        $fertig++
+        if ($bekannt.Contains($f)) { continue }
+        if (-not (Test-Path -LiteralPath $f)) { continue }
+        [void]$bekannt.Add($f)
+        $text = ""
+        $seiten = $null
+        try {
+            $seiten = Rendere-PdfSeiten $f 1240 $script:IndexSeiten
+            $sb = New-Object System.Text.StringBuilder
+            foreach ($s in $seiten) {
+                $erkannt = Erkenne-Text $s.Png
+                if ($erkannt) { [void]$sb.AppendLine($erkannt.Text) }
+            }
+            $text = $sb.ToString()
+        } catch {
+            $fehler++
+        } finally {
+            if ($seiten) { Entferne-SeitenBilder $seiten }
+        }
+        if ($text.Length -gt 30000) { $text = $text.Substring(0, 30000) }
+        $datum = ""
+        try { $datum = [System.IO.File]::GetLastWriteTime($f).ToString("yyyy-MM-dd") } catch {}
+        $name = [System.IO.Path]::GetFileNameWithoutExtension($f)
+        if ($name -match '^(\d{4}-\d{2}-\d{2})_(.*)$') { $datum = $matches[1]; $name = $matches[2] }
+        $eintrag = [ordered]@{
+            Zeit = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'); Datum = $datum; Ziel = $e.Ziel
+            Mitarbeiter = $e.Mitarbeiter; Bezeichnung = $name; Pfad = $f; PC = $env:COMPUTERNAME
+            Text = $text; Quelle = "Altbestand"
+        }
+        try { [System.IO.File]::AppendAllText($script:AltbestandIndex, (($eintrag | ConvertTo-Json -Compress -Depth 2) + "`r`n"), (New-Object System.Text.UTF8Encoding($false))) } catch {}
+        $neu++; $seitLetzterKopie++
+        if ($seitLetzterKopie -ge 20) {
+            Kopiere-AltbestandInShop; $seitLetzterKopie = 0
+            # Was andere PCs inzwischen erledigt haben, nicht doppelt machen
+            foreach ($p in (Lese-BekanntePfade)) { [void]$bekannt.Add($p) }
+        }
+        Start-Sleep -Milliseconds 200
+    }
     Kopiere-AltbestandInShop
-    Schreibe-Log "Indexierung Altbestand: fertig - $neu Dokument(e) neu aufgenommen$(if ($fehler) { ", $fehler nicht lesbar" })."
+    Remove-Item -Path $script:IndexAbbruchDatei -Force -ErrorAction SilentlyContinue
+    if ($abgebrochen) {
+        Schreibe-IndexFortschritt "Abgebrochen" $fertig $gesamt $neu $fehler ""
+        Schreibe-Log "Indexierung Altbestand: abgebrochen nach $fertig von $gesamt - $neu Dokument(e) neu aufgenommen."
+    } else {
+        Schreibe-IndexFortschritt "Fertig" $gesamt $gesamt $neu $fehler ""
+        Schreibe-Log "Indexierung Altbestand: fertig - $neu Dokument(e) neu aufgenommen$(if ($fehler) { ", $fehler nicht lesbar" })."
+    }
+}
+
+# ----- Fenster mit Ladebalken (nicht modal, laeuft im Watcher) -----
+$script:IdxFenster = $null
+$script:IdxTimer   = $null
+
+function Formatiere-Dauer([double]$sekunden) {
+    if ($sekunden -lt 60) { return "weniger als 1 Min." }
+    $min = [int][Math]::Round($sekunden / 60)
+    if ($min -lt 60) { return "$min Min." }
+    return ("{0} Std. {1} Min." -f [int][Math]::Floor($min / 60), ($min % 60))
+}
+
+function Aktualisiere-IndexFortschritt {
+    try {
+        if ($null -eq $script:IdxFenster -or $script:IdxFenster.IsDisposed) { return }
+        $teile = @()
+        $alter = 9999
+        if (Test-Path $script:IndexFortschrittDatei) {
+            $teile = ([System.IO.File]::ReadAllText($script:IndexFortschrittDatei, [System.Text.Encoding]::UTF8)).Split([char]'|', 7)
+            $alter = ((Get-Date) - (Get-Item $script:IndexFortschrittDatei).LastWriteTime).TotalSeconds
+        }
+        $zustand = if ($teile.Count -ge 1) { $teile[0] } else { "" }
+        $fertig = 0; $gesamt = 0; $start = [long]0; $neu = 0; $fehler = 0; $datei = ""
+        if ($teile.Count -ge 7) {
+            [void][int]::TryParse($teile[1], [ref]$fertig); [void][int]::TryParse($teile[2], [ref]$gesamt)
+            [void][long]::TryParse($teile[3], [ref]$start); [void][int]::TryParse($teile[4], [ref]$neu)
+            [void][int]::TryParse($teile[5], [ref]$fehler); $datei = $teile[6]
+        }
+        $laeuft = Laeuft-AltbestandIndexierung
+        if (-not $laeuft -and ($zustand -eq "Laeuft" -or $zustand -eq "Suche" -or ($zustand -eq "Start" -and $alter -gt 60))) { $zustand = "Steht" }
+        if ($zustand -eq "" ) { $zustand = if ($laeuft) { "Start" } else { "Nie" } }
+
+        $script:IdxAbbrechen.Enabled = $laeuft
+        $script:IdxStarten.Visible = (-not $laeuft -and $zustand -ne "Start")
+        switch ($zustand) {
+            "Start" {
+                $script:IdxKopf.Text = "Wird gestartet..."
+                if ($script:IdxBalken.Style -ne "Marquee") { $script:IdxBalken.Style = "Marquee" }
+                $script:IdxText.Text = "Einen Moment bitte."
+                $script:IdxDetail.Text = ""; $script:IdxRest.Text = ""
+            }
+            "Suche" {
+                $script:IdxKopf.Text = "Dokumente werden gezaehlt..."
+                if ($script:IdxBalken.Style -ne "Marquee") { $script:IdxBalken.Style = "Marquee" }
+                $script:IdxText.Text = ("{0:N0} noch nicht durchsuchbare PDFs gefunden" -f $fertig)
+                $script:IdxDetail.Text = $datei; $script:IdxRest.Text = ""
+            }
+            "Laeuft" {
+                $script:IdxKopf.Text = "Alte Dokumente werden gelesen"
+                if ($script:IdxBalken.Style -ne "Continuous") { $script:IdxBalken.Style = "Continuous" }
+                $prozent = if ($gesamt -gt 0) { [Math]::Min(100, [int][Math]::Floor($fertig * 100.0 / $gesamt)) } else { 0 }
+                $script:IdxBalken.Value = $prozent
+                $script:IdxText.Text = ("{0:N0} von {1:N0} Dokumenten  ({2} %)" -f $fertig, $gesamt, $prozent)
+                $script:IdxDetail.Text = [System.IO.Path]::GetFileName($datei)
+                $rest = ""
+                if ($fertig -ge 3 -and $start -gt 0) {
+                    $vergangen = ((Get-Date).Ticks - $start) / 10000000.0
+                    $rest = "Noch etwa " + (Formatiere-Dauer ($vergangen / $fertig * ($gesamt - $fertig))) + "   -   "
+                }
+                $script:IdxRest.Text = $rest + "$neu neu durchsuchbar" + $(if ($fehler) { ", $fehler nicht lesbar" } else { "" })
+            }
+            "Fertig" {
+                $script:IdxKopf.Text = "Fertig"
+                if ($script:IdxBalken.Style -ne "Continuous") { $script:IdxBalken.Style = "Continuous" }; $script:IdxBalken.Value = 100
+                $script:IdxText.Text = $(if ($gesamt -eq 0) { "Alle Dokumente waren schon durchsuchbar." } else { ("{0:N0} Dokument(e) sind jetzt durchsuchbar." -f $neu) })
+                $script:IdxDetail.Text = $(if ($fehler) { "$fehler Datei(en) konnten nicht gelesen werden." } else { "" })
+                $script:IdxRest.Text = ""
+            }
+            "Abgebrochen" {
+                $script:IdxKopf.Text = "Abgebrochen"
+                if ($script:IdxBalken.Style -ne "Continuous") { $script:IdxBalken.Style = "Continuous" }
+                $script:IdxBalken.Value = $(if ($gesamt -gt 0) { [Math]::Min(100, [int]($fertig * 100.0 / $gesamt)) } else { 0 })
+                $script:IdxText.Text = ("{0:N0} von {1:N0} Dokumenten bearbeitet, {2:N0} neu durchsuchbar." -f $fertig, $gesamt, $neu)
+                $script:IdxDetail.Text = "Beim naechsten Start geht es mit den restlichen weiter."
+                $script:IdxRest.Text = ""
+            }
+            "Steht" {
+                $script:IdxKopf.Text = "Laeuft gerade nicht"
+                if ($script:IdxBalken.Style -ne "Continuous") { $script:IdxBalken.Style = "Continuous" }
+                $script:IdxBalken.Value = $(if ($gesamt -gt 0) { [Math]::Min(100, [int]($fertig * 100.0 / $gesamt)) } else { 0 })
+                $script:IdxText.Text = $(if ($gesamt -gt 0) { ("Zuletzt {0:N0} von {1:N0} Dokumenten." -f $fertig, $gesamt) } else { "" })
+                $script:IdxDetail.Text = "Mit 'Starten' geht es an der Stelle weiter."
+                $script:IdxRest.Text = ""
+            }
+            default {
+                $script:IdxKopf.Text = "Noch nicht gestartet"
+                if ($script:IdxBalken.Style -ne "Continuous") { $script:IdxBalken.Style = "Continuous" }; $script:IdxBalken.Value = 0
+                $script:IdxText.Text = ""; $script:IdxDetail.Text = ""; $script:IdxRest.Text = ""
+            }
+        }
+        if ($laeuft -and (Test-Path $script:IndexAbbruchDatei)) { $script:IdxKopf.Text = "Wird abgebrochen..."; $script:IdxAbbrechen.Enabled = $false }
+    } catch {}
+}
+
+function Zeige-IndexFortschritt {
+    if ($script:IdxFenster -and -not $script:IdxFenster.IsDisposed) {
+        $script:IdxFenster.WindowState = "Normal"; $script:IdxFenster.Activate(); return
+    }
+    $f = New-Object System.Windows.Forms.Form
+    $f.Add_Load({ Setze-Design $this })
+    $f.Text = "Alte Dokumente durchsuchbar machen"
+    $f.FormBorderStyle = "FixedDialog"
+    $f.MaximizeBox = $false; $f.MinimizeBox = $true
+    $f.StartPosition = "CenterScreen"
+    $f.ClientSize = New-Object System.Drawing.Size(460, 200)
+    $f.BackColor = [System.Drawing.Color]::White
+    try { $f.Icon = Hole-DinoIcon 32 } catch {}
+
+    $script:IdxKopf = New-Object System.Windows.Forms.Label
+    $script:IdxKopf.Location = New-Object System.Drawing.Point(18, 14)
+    $script:IdxKopf.Size = New-Object System.Drawing.Size(424, 26)
+    $script:IdxKopf.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 12)
+    $script:IdxKopf.ForeColor = $script:FarbeText
+    $f.Controls.Add($script:IdxKopf)
+
+    $script:IdxText = New-Object System.Windows.Forms.Label
+    $script:IdxText.Location = New-Object System.Drawing.Point(18, 44)
+    $script:IdxText.Size = New-Object System.Drawing.Size(424, 20)
+    $script:IdxText.Font = New-Object System.Drawing.Font("Segoe UI", 9.5)
+    $f.Controls.Add($script:IdxText)
+
+    $script:IdxBalken = New-Object System.Windows.Forms.ProgressBar
+    $script:IdxBalken.Location = New-Object System.Drawing.Point(18, 70)
+    $script:IdxBalken.Size = New-Object System.Drawing.Size(424, 22)
+    $script:IdxBalken.Minimum = 0; $script:IdxBalken.Maximum = 100
+    $script:IdxBalken.MarqueeAnimationSpeed = 30
+    $f.Controls.Add($script:IdxBalken)
+
+    $script:IdxDetail = New-Object System.Windows.Forms.Label
+    $script:IdxDetail.Location = New-Object System.Drawing.Point(18, 98)
+    $script:IdxDetail.Size = New-Object System.Drawing.Size(424, 18)
+    $script:IdxDetail.AutoEllipsis = $true
+    $script:IdxDetail.ForeColor = $script:FarbeGrau
+    $f.Controls.Add($script:IdxDetail)
+
+    $script:IdxRest = New-Object System.Windows.Forms.Label
+    $script:IdxRest.Location = New-Object System.Drawing.Point(18, 118)
+    $script:IdxRest.Size = New-Object System.Drawing.Size(424, 18)
+    $script:IdxRest.ForeColor = $script:FarbeGrau
+    $f.Controls.Add($script:IdxRest)
+
+    $script:IdxStarten = New-Object System.Windows.Forms.Button
+    $script:IdxStarten.Text = "Starten"
+    $script:IdxStarten.Location = New-Object System.Drawing.Point(18, 154)
+    $script:IdxStarten.Size = New-Object System.Drawing.Size(110, 30)
+    $script:IdxStarten.Add_Click({
+        if (-not (Starte-AltbestandIndexierung)) {
+            [System.Windows.Forms.MessageBox]::Show("Die Indexierung konnte nicht gestartet werden (Texterkennung nicht verfuegbar?). Details stehen in der Log-Datei.", "DiNo1 Druck & Scan", "OK", "Warning") | Out-Null
+        }
+        Aktualisiere-IndexFortschritt
+    })
+    $f.Controls.Add($script:IdxStarten)
+
+    $script:IdxAbbrechen = New-Object System.Windows.Forms.Button
+    $script:IdxAbbrechen.Text = "Abbrechen"
+    $script:IdxAbbrechen.Location = New-Object System.Drawing.Point(196, 154)
+    $script:IdxAbbrechen.Size = New-Object System.Drawing.Size(100, 30)
+    $script:IdxAbbrechen.Add_Click({
+        try { [System.IO.File]::WriteAllText($script:IndexAbbruchDatei, (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')) } catch {}
+        $script:IdxKopf.Text = "Wird abgebrochen..."
+        $script:IdxAbbrechen.Enabled = $false
+    })
+    $f.Controls.Add($script:IdxAbbrechen)
+
+    $zu = New-Object System.Windows.Forms.Button
+    $zu.Text = "Im Hintergrund weiter"
+    $zu.Location = New-Object System.Drawing.Point(302, 154)
+    $zu.Size = New-Object System.Drawing.Size(140, 30)
+    $zu.Add_Click({ $script:IdxFenster.Close() })
+    $f.Controls.Add($zu)
+
+    $script:IdxTimer = New-Object System.Windows.Forms.Timer
+    $script:IdxTimer.Interval = 1000
+    $script:IdxTimer.Add_Tick({ Aktualisiere-IndexFortschritt })
+    $f.Add_FormClosed({
+        try { $script:IdxTimer.Stop(); $script:IdxTimer.Dispose() } catch {}
+        $script:IdxTimer = $null
+        $script:IdxFenster = $null
+    })
+    $script:IdxFenster = $f
+    Aktualisiere-IndexFortschritt
+    $script:IdxTimer.Start()
+    $f.Show()
+    $f.Activate()
 }
 
 # ======================= PDFs ZUSAMMENFUEGEN =======================
@@ -5134,7 +5374,7 @@ function Fuehre-NebenaufgabenAus {
     try { Pruefe-Gesamtbericht } catch {}
     try { if ($timer.Enabled) { Pruefe-AutoZusammenfuegen } } catch {}
     try {
-        if (((Get-Date) - $script:NebenStart).TotalMinutes -ge 10 -and ((Get-Date) - $script:IndexLetzterStart).TotalHours -ge 24) { Starte-AltbestandIndexierung }
+        if (((Get-Date) - $script:NebenStart).TotalMinutes -ge 10 -and ((Get-Date) - $script:IndexLetzterStart).TotalHours -ge 24) { [void](Starte-AltbestandIndexierung) }
     } catch {}
 }
 
@@ -5503,8 +5743,8 @@ $menuAdmin = $menu.Items.Add("Alle Shops: Nutzer und Tagesberichte (Admin)...")
 $menuAdmin.Add_Click({ Zeige-AdminUebersicht 0 })
 $menuAltbestand = $menu.Items.Add("Alte Dokumente durchsuchbar machen")
 $menuAltbestand.Add_Click({
-    Starte-AltbestandIndexierung
-    $trayIcon.ShowBalloonTip(8000, "DiNo1 Druck & Scan", "Alte Dokumente im Shop- und in den Mitarbeiter-Ordnern werden im Hintergrund gelesen. Das kann einige Zeit dauern - der PC bleibt dabei normal nutzbar.", [System.Windows.Forms.ToolTipIcon]::Info)
+    [void](Starte-AltbestandIndexierung)
+    Zeige-IndexFortschritt
 })
 $menu.Add_Opening({
     $n = @(Get-ChildItem -Path $UebersprungenOrdner -Filter "*.pdf" -File -ErrorAction SilentlyContinue).Count

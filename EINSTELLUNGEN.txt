@@ -415,3 +415,6 @@ NEU IN PAKET 17 (Version 17)
 - Version 38: Statt Freischalten je PC: Der Eintrag "Alle Shops ..." ist auf
   allen PCs sichtbar, oeffnet sich aber nur mit dem Admin-Passwort (einmal je
   Programmstart). Admin-freischalten.cmd entfaellt.
+- Version 39: "Alte Dokumente durchsuchbar machen" zeigt ein Fenster mit
+  Ladebalken (x von y Dokumenten, Prozent, Restzeit). Abbrechen moeglich,
+  Fenster schliessen laesst die Indexierung im Hintergrund weiterlaufen.
