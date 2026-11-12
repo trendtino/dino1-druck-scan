@@ -440,3 +440,9 @@ NEU IN PAKET 17 (Version 17)
   eine andere ziehen haengt sie hinten an (Einzelteile-Ordner). Original wird vor
   dem Bearbeiten in C:\PaperPortErsatz\Sicherung gesichert (neueste 100).
   Programmfenster in Gruppen: Erfassen, Finden, Ordner, Berichte/Einstellungen.
+- Version 44: Drehen wirkt sofort in der Vorschau; gespeichert wird erst mit
+  "Speichern" (oder Nachfrage beim Wechseln/Schliessen). Suche in die Ansicht
+  eingebaut: Tippen filtert den Ordner, Enter/"Ueberall suchen" sucht im Text
+  aller Dokumente. Rechtsklick: Verschieben nach Shop/Kasse/Mitarbeiter.
+  Fehler in der Ansicht werden mit genauer Stelle ins Log geschrieben.
+  Tastatur: Strg+R/Strg+L drehen, Strg+S speichern, Strg+F Suchfeld.

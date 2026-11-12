@@ -244,7 +244,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "43"
+$script:WatcherVersion      = "44"
 $script:WatcherVersionDatum = "12.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -5975,6 +5975,7 @@ function Rendere-PdfSeite([string]$pdfPfad, [int]$index, [int]$breitePx) {
         $tmp.Dispose(); $ms.Dispose()
         return @{ Bild = $bild; Anzahl = $anzahl; Index = $index }
     } catch {
+        Schreibe-FehlerLog "bei der Seitenvorschau von $pdfPfad" $_
         return $null
     } finally {
         if ($netz) { try { $netz.Dispose() } catch {} }
@@ -6059,6 +6060,8 @@ function Av-NeuerKnoten([string]$text, [string]$pfad) {
 }
 
 function Av-LadeOrdner([string]$ordner) {
+    Av-StoppeSuche
+    $script:AvSuchbegriff = $null
     $script:AvOrdner = $ordner
     $script:AvMiniTimer.Stop()
     $liste = $script:AvListe
@@ -6091,6 +6094,7 @@ function Av-LadeOrdner([string]$ordner) {
 }
 
 function Av-ZeigeSeite($pfad, [int]$index) {
+    if ("$pfad" -ine "$($script:AvSeitePfad)") { Av-FrageSpeichern }
     $alt = $script:AvGross.Image
     $script:AvGross.Image = $null
     if ($alt) { try { $alt.Dispose() } catch {} }
@@ -6111,6 +6115,9 @@ function Av-ZeigeSeite($pfad, [int]$index) {
         $script:AvZurueck.Enabled = $false; $script:AvVor.Enabled = $false
         return
     }
+    $q = 0
+    if ($script:AvDrehungen.ContainsKey([int]$r.Index)) { $q = [int]$script:AvDrehungen[[int]$r.Index] }
+    if ($q -ne 0) { $r.Bild.RotateFlip((Hole-DrehTyp $q)) }
     $script:AvGross.Image = $r.Bild
     $script:AvSeiteNr = $r.Index
     $script:AvSeiten = $r.Anzahl
@@ -6172,32 +6179,61 @@ function Neuer-SymbolKnopf([int]$glyph, [string]$text, [string]$tipp, [int]$brei
 # ----- Seiten drehen / loeschen -----
 $script:SicherungOrdner = Join-Path $script:DatenOrdner "Sicherung"
 
-# $aktion: "rechts", "links" oder "loeschen"; $seite: Index (0 = erste) oder -1 = alle Seiten
-function Bearbeite-PdfSeiten([string]$pfad, [string]$aktion, [int]$seite) {
+# Fehler mit genauer Stelle ins Log schreiben
+function Schreibe-FehlerLog([string]$was, $fehler) {
+    try {
+        $stelle = ""
+        try { $stelle = ($fehler.InvocationInfo.PositionMessage -replace '[\r\n]+', ' ') } catch {}
+        $stapel = ""
+        try { $stapel = ($fehler.ScriptStackTrace -replace '[\r\n]+', ' <- ') } catch {}
+        Schreibe-Log "FEHLER $($was): $($fehler.Exception.Message) | Stelle: $stelle | Aufrufe: $stapel"
+    } catch {}
+}
+
+# Viertel-Drehungen im Uhrzeigersinn (1..3) -> RotateFlipType
+function Hole-DrehTyp([int]$viertel) {
+    switch ((($viertel % 4) + 4) % 4) {
+        1 { return [System.Drawing.RotateFlipType]::Rotate90FlipNone }
+        2 { return [System.Drawing.RotateFlipType]::Rotate180FlipNone }
+        3 { return [System.Drawing.RotateFlipType]::Rotate270FlipNone }
+    }
+    return [System.Drawing.RotateFlipType]::RotateNoneFlipNone
+}
+
+# Seitenbild (PNG-Datei) drehen
+function Drehe-Bilddatei([string]$png, [int]$viertel) {
+    [byte[]]$bytes = [System.IO.File]::ReadAllBytes($png)
+    $ms = New-Object System.IO.MemoryStream -ArgumentList (,$bytes)
+    $img = [System.Drawing.Image]::FromStream($ms)
+    $bmp = New-Object System.Drawing.Bitmap -ArgumentList $img
+    $img.Dispose(); $ms.Dispose()
+    $bmp.RotateFlip((Hole-DrehTyp $viertel))
+    $bmp.Save($png, [System.Drawing.Imaging.ImageFormat]::Png)
+    $bmp.Dispose()
+}
+
+# PDF neu aufbauen: $drehungen = Hashtable Seitenindex -> Viertel-Drehungen,
+# $loeschSeite = Index der zu entfernenden Seite oder -1
+function Bearbeite-PdfSeiten([string]$pfad, $drehungen, [int]$loeschSeite = -1) {
     $seiten = $null
     $temp = Join-Path $ScanTempOrdner ("Bearbeitet_" + [guid]::NewGuid().ToString("N") + ".pdf")
     try {
-        Zeige-Fortschritt "PDF wird bearbeitet ..." "Seiten werden gelesen ..."
+        Zeige-Fortschritt "PDF wird gespeichert ..." "Seiten werden gelesen ..."
         $seiten = Rendere-PdfSeiten $pfad 2000 0
         $liste = New-Object System.Collections.Generic.List[object]
         foreach ($s in $seiten) { [void]$liste.Add($s) }
         if ($liste.Count -eq 0) { throw "Die PDF enthaelt keine Seiten." }
-        if ($aktion -eq "loeschen") {
+        $nr = -1
+        foreach ($s in @($liste)) {
+            $nr++
+            $q = 0
+            if ($drehungen -and $drehungen.ContainsKey($nr)) { $q = [int]$drehungen[$nr] }
+            if (($q % 4) -ne 0) { Drehe-Bilddatei ([string]$s.Png) $q }
+        }
+        if ($loeschSeite -ge 0) {
             if ($liste.Count -le 1) { throw "Die einzige Seite kann nicht entfernt werden." }
-            if ($seite -lt 0 -or $seite -ge $liste.Count) { throw "Unbekannte Seite." }
-            $liste.RemoveAt($seite)
-        } else {
-            $dreh = if ($aktion -eq "links") { [System.Drawing.RotateFlipType]::Rotate270FlipNone } else { [System.Drawing.RotateFlipType]::Rotate90FlipNone }
-            for ($i = 0; $i -lt $liste.Count; $i++) {
-                if ($seite -ge 0 -and $i -ne $seite) { continue }
-                $ms = New-Object System.IO.MemoryStream(,[System.IO.File]::ReadAllBytes($liste[$i].Png))
-                $tmp = [System.Drawing.Image]::FromStream($ms)
-                $bmp = New-Object System.Drawing.Bitmap $tmp
-                $tmp.Dispose(); $ms.Dispose()
-                $bmp.RotateFlip($dreh)
-                $bmp.Save($liste[$i].Png, [System.Drawing.Imaging.ImageFormat]::Png)
-                $bmp.Dispose()
-            }
+            if ($loeschSeite -ge $liste.Count) { throw "Unbekannte Seite." }
+            $liste.RemoveAt($loeschSeite)
         }
         $text = Schreibe-PdfAusSeiten $liste $temp "PDF wird gespeichert ..."
         # Sicherung des Originals auf diesem PC (die neuesten 100 bleiben)
@@ -6210,9 +6246,13 @@ function Bearbeite-PdfSeiten([string]$pfad, [string]$aktion, [int]$seite) {
         try { Move-Item -Path $temp -Destination $pfad -ErrorAction Stop }
         catch { Copy-Item -Path $temp -Destination $pfad -Force -ErrorAction Stop }
         $basis = [System.IO.Path]::GetFileNameWithoutExtension($pfad)
-        $datum = if ($basis -match '^(\d{4}-\d{2}-\d{2})_') { $matches[1] } else { (Get-Date -Format 'yyyy-MM-dd') }
+        $datum = (Get-Date -Format 'yyyy-MM-dd')
+        if ($basis -match '^(\d{4}-\d{2}-\d{2})_') { $datum = $matches[1] }
         Merke-NeuesDokument $pfad $text $datum ($basis -replace '^\d{4}-\d{2}-\d{2}_', '')
-        Schreibe-Log "PDF bearbeitet ($aktion, Seite $(if ($seite -lt 0) { 'alle' } else { $seite + 1 })): $pfad"
+        Schreibe-Log "PDF bearbeitet (gedreht: $(if ($drehungen) { $drehungen.Count } else { 0 }) Seite(n), entfernt: $(if ($loeschSeite -ge 0) { $loeschSeite + 1 } else { '-' })): $pfad"
+    } catch {
+        Schreibe-FehlerLog "beim Bearbeiten von $pfad" $_
+        throw
     } finally {
         if ($seiten) { Entferne-SeitenBilder $seiten }
         Remove-Item -Path $temp -Force -ErrorAction SilentlyContinue
@@ -6229,29 +6269,226 @@ function Av-NachBearbeitung([string]$pfad, [int]$seite) {
     if ($pfad -and (Test-Path -LiteralPath $pfad)) { Av-ZeigeSeite $pfad $seite }
 }
 
-function Av-Bearbeite([string]$aktion, [bool]$alleSeiten) {
-    $p = $script:AvSeitePfad
-    if (-not $p) { $m = @(Av-Markierte); if ($m.Count -gt 0) { $p = $m[0] } }
-    if (-not $p) { return }
-    $seite = if ($alleSeiten) { -1 } else { [int]$script:AvSeiteNr }
-    if ($aktion -eq "loeschen") {
-        $a = [System.Windows.Forms.MessageBox]::Show("Seite $($seite + 1) aus '$([System.IO.Path]::GetFileName($p))' entfernen?`n`nDas Original wird auf diesem PC gesichert.", "Seite entfernen", "YesNo", "Question")
-        if ($a -ne "Yes") { return }
+# Seitenbild eines Dokuments in der Liste neu erzeugen
+function Av-ErneuereMiniatur([string]$pfad) {
+    foreach ($it in $script:AvListe.Items) {
+        if ([string]$it.Tag -ine $pfad) { continue }
+        $bild = Hole-Miniatur $pfad
+        $mini = Rahme-Miniatur $bild
+        if ($bild) { $bild.Dispose() }
+        $k = "n" + [guid]::NewGuid().ToString("N")
+        $script:AvBilder.Images.Add($k, $mini)
+        $mini.Dispose()
+        $it.ImageKey = $k
     }
-    $script:AvListe.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
+}
+
+# Drehen: sofort in der Vorschau, gespeichert wird erst auf Nachfrage
+$script:AvDrehungen = @{}
+function Av-ZeigeAenderung {
+    $n = $script:AvDrehungen.Count
+    $script:AvHinweis.Visible = ($n -gt 0)
+    if ($n -gt 0) { $script:AvHinweisText.Text = "$n Seite(n) gedreht - noch nicht gespeichert" }
+}
+
+function Av-Dreh([int]$richtung, [bool]$alleSeiten) {
+    if (-not $script:AvSeitePfad -or $script:AvBeschaeftigt) { return }
+    $seiten = @([int]$script:AvSeiteNr)
+    if ($alleSeiten -and $script:AvSeiten -gt 0) { $seiten = @(0..([int]$script:AvSeiten - 1)) }
+    foreach ($i in $seiten) {
+        $alt = 0
+        if ($script:AvDrehungen.ContainsKey([int]$i)) { $alt = [int]$script:AvDrehungen[[int]$i] }
+        $neu = ((($alt + $richtung) % 4) + 4) % 4
+        if ($neu -eq 0) { $script:AvDrehungen.Remove([int]$i) } else { $script:AvDrehungen[[int]$i] = $neu }
+    }
+    $img = $script:AvGross.Image
+    if ($img) {
+        $img.RotateFlip((Hole-DrehTyp $richtung))
+        $script:AvGross.Image = $null
+        $script:AvGross.Image = $img
+    }
+    Av-ZeigeAenderung
+}
+
+# Rueckgabe $true wenn gespeichert
+function Av-SpeichereAenderung([int]$loeschSeite = -1) {
+    $pfad = $script:AvSeitePfad
+    if (-not $pfad -or $script:AvBeschaeftigt) { return $false }
+    $script:AvBeschaeftigt = $true
+    $miniLief = $script:AvMiniTimer.Enabled
+    $script:AvMiniTimer.Stop()
+    $ok = $false; $fehlerText = ""
     try {
-        Bearbeite-PdfSeiten $p $aktion $seite
-        $neueSeite = if ($alleSeiten) { 0 } elseif ($aktion -eq "loeschen") { [Math]::Max(0, $seite - 1) } else { $seite }
-        Av-NachBearbeitung $p $neueSeite
+        Bearbeite-PdfSeiten $pfad $script:AvDrehungen.Clone() $loeschSeite
+        $ok = $true
     } catch {
-        [System.Windows.Forms.MessageBox]::Show("Bearbeiten fehlgeschlagen: $($_.Exception.Message)", "DiNo1 Druck & Scan") | Out-Null
+        $fehlerText = $_.Exception.Message
     } finally {
-        $script:AvListe.Cursor = [System.Windows.Forms.Cursors]::Default
+        $script:AvBeschaeftigt = $false
+        if ($miniLief) { $script:AvMiniTimer.Start() }
+    }
+    if ($ok) {
+        $script:AvDrehungen = @{}
+        try { Av-ErneuereMiniatur $pfad } catch { Schreibe-FehlerLog "beim Erneuern des Seitenbilds" $_ }
+    } else {
+        [System.Windows.Forms.MessageBox]::Show("Speichern fehlgeschlagen: $fehlerText`n`nDetails stehen in der Log-Datei.", "DiNo1 Druck & Scan") | Out-Null
+    }
+    Av-ZeigeAenderung
+    return $ok
+}
+
+# Vor dem Wechsel zu einem anderen Dokument / Schliessen
+function Av-FrageSpeichern {
+    if (-not $script:AvSeitePfad -or $script:AvDrehungen.Count -eq 0) { $script:AvDrehungen = @{}; Av-ZeigeAenderung; return }
+    $a = [System.Windows.Forms.MessageBox]::Show("Die Drehung von '$([System.IO.Path]::GetFileName($script:AvSeitePfad))' speichern?", "DiNo1 Druck & Scan", "YesNo", "Question")
+    if ($a -eq "Yes") { [void](Av-SpeichereAenderung) }
+    $script:AvDrehungen = @{}
+    Av-ZeigeAenderung
+}
+
+function Av-SeiteEntfernen {
+    $p = $script:AvSeitePfad
+    if (-not $p -or $script:AvBeschaeftigt) { return }
+    $nr = [int]$script:AvSeiteNr
+    $a = [System.Windows.Forms.MessageBox]::Show("Seite $($nr + 1) aus '$([System.IO.Path]::GetFileName($p))' entfernen?`n`nDas Original wird auf diesem PC gesichert.", "Seite entfernen", "YesNo", "Question")
+    if ($a -ne "Yes") { return }
+    if (Av-SpeichereAenderung $nr) { Av-ZeigeSeite $p ([Math]::Max(0, $nr - 1)) }
+}
+
+function Av-Verwerfen {
+    $p = $script:AvSeitePfad
+    $script:AvDrehungen = @{}
+    Av-ZeigeAenderung
+    if ($p) { Av-ZeigeSeite $p ([int]$script:AvSeiteNr) }
+}
+
+# Verschieben nach Shop / Kasse / Mitarbeiter
+function Av-Verschiebe([string]$art, [string]$mitarbeiter) {
+    $m = @(Av-Markierte)
+    if ($m.Count -ne 1) { return }
+    $p = $m[0]
+    try {
+        $datum = (Get-Item -LiteralPath $p).LastWriteTime.ToString("yyyy-MM-dd")
+        $b = [System.IO.Path]::GetFileNameWithoutExtension($p)
+        if ($b -match '^(\d{4}-\d{2}-\d{2})_') { $datum = $matches[1] }
+        $zielOrdner = Ermittle-VerschiebeZiel $art $mitarbeiter $datum
+        [void](Verschiebe-Dokument $p $zielOrdner $b $art $mitarbeiter)
+        if ($script:AvSeitePfad -ieq $p) { $script:AvDrehungen = @{}; Av-ZeigeSeite $null 0 }
+        foreach ($it in @($script:AvListe.SelectedItems)) { $script:AvListe.Items.Remove($it) }
+        $script:AvStatus.Text = "Verschoben nach: $zielOrdner"
+    } catch {
+        Schreibe-FehlerLog "beim Verschieben von $p" $_
+        [System.Windows.Forms.MessageBox]::Show("Verschieben fehlgeschlagen: $($_.Exception.Message)", "DiNo1 Druck & Scan") | Out-Null
+    }
+}
+
+# ----- Volltextsuche in der Ansicht (laeuft im Hintergrund) -----
+$script:AvSuche = $null
+function Av-StoppeSuche {
+    if ($script:AvSuchTimer) { $script:AvSuchTimer.Stop() }
+    $s = $script:AvSuche
+    $script:AvSuche = $null
+    if ($s) {
+        try { $s.Zustand.Abbrechen = $true } catch {}
+        try { if ($s.PS) { [void]$s.PS.BeginStop($null, $null) } } catch {}
+    }
+}
+
+function Av-StarteSuche {
+    $woerter = @(($script:AvFilter.Text -split '\s+') | Where-Object { $_ })
+    if ($woerter.Count -eq 0) { return }
+    Av-StoppeSuche
+    Av-ZeigeSeite $null 0
+    $script:AvMiniTimer.Stop()
+    $script:AvListe.BeginUpdate()
+    $script:AvListe.Items.Clear()
+    $script:AvBilder.Images.Clear()
+    $script:AvBilder.Images.Add("_leer", (Rahme-Miniatur $null))
+    $script:AvListe.EndUpdate()
+    $script:AvNaechste = 0
+    $script:AvOrdner = $null
+    $script:AvSuchbegriff = $script:AvFilter.Text.Trim()
+    $script:AvPfad.Text = "Suchergebnis f$([char]0x00FC)r '$($script:AvSuchbegriff)' (Shop und Mitarbeiter)"
+    $zustand = [hashtable]::Synchronized(@{
+        Abbrechen = $false; Fertig = $false; Fehler = ""; ZuViele = $false
+        Status = "Suche laeuft ..."
+        Treffer = New-Object 'System.Collections.Concurrent.ConcurrentQueue[object]'
+        Umzuege = New-Object 'System.Collections.Concurrent.ConcurrentQueue[object]'
+    })
+    $indexOrdner = ""
+    if (-not [string]::IsNullOrWhiteSpace($StatusOrdner) -and $StatusOrdner.Trim() -ne "-") {
+        try { $indexOrdner = Join-Path $StatusOrdner "Suchindex" } catch {}
+    }
+    try {
+        $ps = [System.Management.Automation.PowerShell]::Create()
+        [void]$ps.AddScript($script:SuchArbeit.ToString())
+        [void]$ps.AddArgument($zustand)
+        [void]$ps.AddArgument([string[]]$woerter)
+        [void]$ps.AddArgument([string[]](Get-SuchOrdner))
+        [void]$ps.AddArgument([string[]]@($script:SuchindexDatei, $script:AltbestandIndex))
+        [void]$ps.AddArgument($indexOrdner)
+        [void]$ps.AddArgument((Get-PcKennung) + ".jsonl")
+        [void]$ps.AddArgument($true)
+        [void]$ps.AddArgument([string]$StatusOrdner)
+        $script:AvSuche = @{ PS = $ps; Zustand = $zustand; Anzahl = 0; Handle = $ps.BeginInvoke() }
+    } catch {
+        Schreibe-FehlerLog "beim Start der Suche" $_
+        $script:AvStatus.Text = "Suche konnte nicht gestartet werden: $($_.Exception.Message)"
+        return
+    }
+    $script:AvStatus.Text = "Suche l$([char]0x00E4)uft ..."
+    $script:AvSuchTimer.Start()
+}
+
+function Av-SucheTick {
+    $s = $script:AvSuche
+    if (-not $s) { $script:AvSuchTimer.Stop(); return }
+    $z = $s.Zustand
+    $zeile = $null; $n = 0
+    if ($z.Treffer.Count -gt 0) { $script:AvListe.BeginUpdate() }
+    while ($n -lt 200 -and $z.Treffer.TryDequeue([ref]$zeile)) {
+        $n++
+        $pfad = [string]$zeile[4]
+        $name = [string]$zeile[1]
+        if (-not $name) { $name = [System.IO.Path]::GetFileNameWithoutExtension($pfad) }
+        $it = New-Object System.Windows.Forms.ListViewItem($name)
+        $it.ImageKey = "_leer"
+        $it.Tag = $pfad
+        $it.ToolTipText = ([string]$zeile[2] + "  -  " + [string]$zeile[0] + "`n" + [string]$zeile[3])
+        if (-not $zeile[5]) { $it.ForeColor = [System.Drawing.Color]::Gray }
+        [void]$script:AvListe.Items.Add($it)
+        $s.Anzahl++
+    }
+    if ($n -gt 0) {
+        $script:AvListe.EndUpdate()
+        if (-not $script:AvMiniTimer.Enabled) { $script:AvMiniTimer.Start() }
+    }
+    if ($z.Fertig -and $z.Treffer.Count -eq 0) {
+        $script:AvSuchTimer.Stop()
+        $umzug = $null; $u = 0
+        while ($u -lt 20 -and $z.Umzuege.TryDequeue([ref]$umzug)) {
+            $u++
+            try {
+                $abl = Ermittle-AblageFuerPfad $umzug[1]
+                Merke-Verschiebung $umzug[0] $umzug[1] $abl.Ziel $abl.Mitarbeiter ([System.IO.Path]::GetFileNameWithoutExtension($umzug[1]) -replace '^\d{4}-\d{2}-\d{2}_', '')
+            } catch {}
+        }
+        try { $s.PS.Dispose() } catch {}
+        $script:AvSuche = $null
+        if ($z.Fehler) { $script:AvStatus.Text = "Fehler bei der Suche: $($z.Fehler)" }
+        else {
+            $zusatz = ""
+            if ($z.ZuViele) { $zusatz = " - es gibt mehr, bitte Suchbegriff genauer fassen" }
+            $script:AvStatus.Text = "$($s.Anzahl) Treffer f$([char]0x00FC)r '$($script:AvSuchbegriff)'$zusatz"
+        }
+    } else {
+        $script:AvStatus.Text = "$($s.Anzahl) Treffer bisher - $($z.Status)"
     }
 }
 
 # Ziel beim Ziehen hervorheben
 $script:AvMarkiert = $null
+$script:AvBeschaeftigt = $false
 function Av-ZielMarkierung($it) {
     if ($script:AvMarkiert -and -not [object]::ReferenceEquals($script:AvMarkiert, $it)) {
         try { $script:AvMarkiert.BackColor = [System.Drawing.Color]::Empty } catch {}
@@ -6282,6 +6519,7 @@ function Av-HaengeAn([string]$ziel, [string[]]$dateien, [bool]$intern) {
         Fuege-PdfsZusammen $liste $ziel $true | Out-Null
         Av-NachBearbeitung $ziel 0
     } catch {
+        Schreibe-FehlerLog "beim Anhaengen an $ziel" $_
         [System.Windows.Forms.MessageBox]::Show("Zusammenf$([char]0x00FC)gen fehlgeschlagen: $($_.Exception.Message)", "DiNo1 Druck & Scan") | Out-Null
     } finally {
         foreach ($k in $temps) { Remove-Item -LiteralPath $k -Force -ErrorAction SilentlyContinue }
@@ -6308,26 +6546,27 @@ function Zeige-DokumenteAnsehen {
     $oben.BackColor = $script:FarbeFlaeche
 
     $lblF = New-Object System.Windows.Forms.Label
-    $lblF.Text = "Filter:"; $lblF.AutoSize = $true
+    $lblF.Text = "Suchen:"; $lblF.AutoSize = $true
     $lblF.Location = New-Object System.Drawing.Point(12, 14)
     $oben.Controls.Add($lblF)
 
     $script:AvFilter = New-Object System.Windows.Forms.TextBox
-    $script:AvFilter.Location = New-Object System.Drawing.Point(58, 11)
-    $script:AvFilter.Size = New-Object System.Drawing.Size(220, 24)
+    $script:AvFilter.Location = New-Object System.Drawing.Point(68, 11)
+    $script:AvFilter.Size = New-Object System.Drawing.Size(260, 24)
+    $script:AvFilter.Font = New-Object System.Drawing.Font("Segoe UI", 10)
     $oben.Controls.Add($script:AvFilter)
 
-    $btnNeu = Neuer-SymbolKnopf 0xE72C "Aktualisieren" "Ordner neu einlesen (F5)" 130
-    $btnNeu.Location = New-Object System.Drawing.Point(290, 4); $btnNeu.Height = 38
-    $oben.Controls.Add($btnNeu)
-
-    $btnSuche = Neuer-SymbolKnopf 0xE721 "Volltextsuche" "In allen Dokumenten nach Text suchen" 140
-    $btnSuche.Location = New-Object System.Drawing.Point(428, 4); $btnSuche.Height = 38
+    $btnSuche = Neuer-SymbolKnopf 0xE721 "$([char]0x00DC)berall suchen" "Im Text aller Dokumente (Shop und Mitarbeiter) suchen - oder Enter dr$([char]0x00FC)cken" 150
+    $btnSuche.Location = New-Object System.Drawing.Point(338, 4); $btnSuche.Height = 38
     $oben.Controls.Add($btnSuche)
 
+    $btnNeu = Neuer-SymbolKnopf 0xE72C "Aktualisieren" "Neu einlesen (F5)" 130
+    $btnNeu.Location = New-Object System.Drawing.Point(494, 4); $btnNeu.Height = 38
+    $oben.Controls.Add($btnNeu)
+
     $script:AvPfad = New-Object System.Windows.Forms.Label
-    $script:AvPfad.Location = New-Object System.Drawing.Point(582, 14)
-    $script:AvPfad.Size = New-Object System.Drawing.Size(760, 20)
+    $script:AvPfad.Location = New-Object System.Drawing.Point(636, 14)
+    $script:AvPfad.Size = New-Object System.Drawing.Size(700, 20)
     $script:AvPfad.Anchor = "Top, Left, Right"
     $script:AvPfad.AutoEllipsis = $true
     $script:AvPfad.ForeColor = $script:FarbeGrau
@@ -6418,7 +6657,22 @@ function Zeige-DokumenteAnsehen {
     $script:AvBtnZus.Enabled = $false
     $leiste2.Controls.AddRange(@($btnAuf, $btnDruck, $script:AvBtnZus))
 
+    # Hinweis "gedreht - noch nicht gespeichert"
+    $script:AvHinweis = New-Object System.Windows.Forms.Panel
+    $script:AvHinweis.Dock = "Bottom"; $script:AvHinweis.Height = 50
+    $script:AvHinweis.BackColor = $script:FarbeAkzentHell
+    $script:AvHinweis.Visible = $false
+    $script:AvHinweisText = New-Object System.Windows.Forms.Label
+    $script:AvHinweisText.Location = New-Object System.Drawing.Point(12, 15); $script:AvHinweisText.Size = New-Object System.Drawing.Size(250, 20)
+    $script:AvHinweisText.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 9.5)
+    $script:AvBtnSpeichern = Neuer-SymbolKnopf 0xE74E "Speichern" "Drehung in der PDF speichern" 120
+    $script:AvBtnSpeichern.Location = New-Object System.Drawing.Point(266, 5)
+    $script:AvBtnVerwerfen = Neuer-SymbolKnopf 0xE711 "Verwerfen" "Drehung zur$([char]0x00FC)cknehmen" 120
+    $script:AvBtnVerwerfen.Location = New-Object System.Drawing.Point(392, 5)
+    $script:AvHinweis.Controls.AddRange(@($script:AvHinweisText, $script:AvBtnSpeichern, $script:AvBtnVerwerfen))
+
     $vp.Controls.Add($script:AvGross)
+    $vp.Controls.Add($script:AvHinweis)
     $vp.Controls.Add($leiste)
     $vp.Controls.Add($leiste2)
     $vp.Controls.Add($script:AvName)
@@ -6470,7 +6724,11 @@ function Zeige-DokumenteAnsehen {
     $script:AvBaum.Add_AfterSelect({
         param($s, $e)
         $f.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
-        try { Av-LadeOrdner ([string]$e.Node.Tag) } finally { $f.Cursor = [System.Windows.Forms.Cursors]::Default }
+        try {
+            if ($script:AvSuchbegriff) { $script:AvFilter.Text = "" }
+            Av-LadeOrdner ([string]$e.Node.Tag)
+            $script:AvFilterTimer.Stop()
+        } finally { $f.Cursor = [System.Windows.Forms.Cursors]::Default }
     })
 
     # ---- Miniaturen nach und nach laden (Fenster bleibt bedienbar) ----
@@ -6506,9 +6764,11 @@ function Zeige-DokumenteAnsehen {
     $script:AvListe.Add_SelectedIndexChanged({ $script:AvAuswahlTimer.Stop(); $script:AvAuswahlTimer.Start() })
     $script:AvZurueck.Add_Click({ if ($script:AvSeitePfad) { Av-ZeigeSeite $script:AvSeitePfad ($script:AvSeiteNr - 1) } })
     $script:AvVor.Add_Click({ if ($script:AvSeitePfad) { Av-ZeigeSeite $script:AvSeitePfad ($script:AvSeiteNr + 1) } })
-    $btnLinks.Add_Click({ Av-Bearbeite "links" $false })
-    $btnRechts.Add_Click({ Av-Bearbeite "rechts" $false })
-    $btnSeiteWeg.Add_Click({ Av-Bearbeite "loeschen" $false })
+    $btnLinks.Add_Click({ Av-Dreh -1 $false })
+    $btnRechts.Add_Click({ Av-Dreh 1 $false })
+    $btnSeiteWeg.Add_Click({ Av-SeiteEntfernen })
+    $script:AvBtnSpeichern.Add_Click({ $p = $script:AvSeitePfad; $nr = [int]$script:AvSeiteNr; if (Av-SpeichereAenderung) { Av-ZeigeSeite $p $nr } })
+    $script:AvBtnVerwerfen.Add_Click({ Av-Verwerfen })
     $script:AvBtnZus.Add_Click({
         $m = @(Av-Markierte)
         if ($m.Count -lt 2) { return }
@@ -6524,8 +6784,16 @@ function Zeige-DokumenteAnsehen {
             try { Start-Process -FilePath $p -Verb Print } catch { [System.Windows.Forms.MessageBox]::Show("Drucken fehlgeschlagen: $($_.Exception.Message)", "DiNo1 Druck & Scan") | Out-Null }
         }
     })
-    $btnNeu.Add_Click({ Av-LadeOrdner $script:AvOrdner })
-    $btnSuche.Add_Click({ Zeige-Suche })
+    $btnNeu.Add_Click({ if ($script:AvSuchbegriff -and -not $script:AvOrdner) { Av-StarteSuche } else { Av-LadeOrdner $script:AvOrdner } })
+    $btnSuche.Add_Click({ Av-StarteSuche })
+    $script:AvTipps.SetToolTip($script:AvFilter, "Tippen filtert den ge$([char]0x00F6)ffneten Ordner nach Dateinamen. Enter sucht im Text aller Dokumente.")
+    $script:AvFilter.Add_KeyDown({
+        param($s, $e)
+        if ($e.KeyCode -eq "Enter") { $e.SuppressKeyPress = $true; $e.Handled = $true; $script:AvFilterTimer.Stop(); Av-StarteSuche }
+    })
+    $script:AvSuchTimer = New-Object System.Windows.Forms.Timer
+    $script:AvSuchTimer.Interval = 250
+    $script:AvSuchTimer.Add_Tick({ Av-SucheTick })
     $script:AvFilterTimer = New-Object System.Windows.Forms.Timer
     $script:AvFilterTimer.Interval = 400
     $script:AvFilterTimer.Add_Tick({ $script:AvFilterTimer.Stop(); if ($script:AvOrdner) { Av-LadeOrdner $script:AvOrdner } })
@@ -6599,11 +6867,16 @@ function Zeige-DokumenteAnsehen {
             $abl = Ermittle-AblageFuerPfad $p
             [void](Verschiebe-Dokument $p (Split-Path $p -Parent) $neuName $abl.Ziel $abl.Mitarbeiter)
             Av-LadeOrdner $script:AvOrdner
-        } catch { [System.Windows.Forms.MessageBox]::Show("Umbenennen fehlgeschlagen: $($_.Exception.Message)", "DiNo1 Druck & Scan") | Out-Null }
+        } catch {
+            Schreibe-FehlerLog "beim Umbenennen von $p" $_
+            [System.Windows.Forms.MessageBox]::Show("Umbenennen fehlgeschlagen: $($_.Exception.Message)", "DiNo1 Druck & Scan") | Out-Null
+        }
     })
     [void]$cm.Items.Add("-")
-    $miDrehR = $cm.Items.Add("Alle Seiten nach rechts drehen"); $miDrehR.Add_Click({ Av-Bearbeite "rechts" $true })
-    $miDrehL = $cm.Items.Add("Alle Seiten nach links drehen"); $miDrehL.Add_Click({ Av-Bearbeite "links" $true })
+    $miDrehR = $cm.Items.Add("Alle Seiten nach rechts drehen"); $miDrehR.Add_Click({ Av-Dreh 1 $true })
+    $miDrehL = $cm.Items.Add("Alle Seiten nach links drehen"); $miDrehL.Add_Click({ Av-Dreh -1 $true })
+    $miVer = New-Object System.Windows.Forms.ToolStripMenuItem("Verschieben nach")
+    [void]$cm.Items.Add($miVer)
     $miZus = $cm.Items.Add("Markierte zusammenf$([char]0x00FC)gen ...")
     $miZus.Add_Click({
         $m = @(Av-Markierte)
@@ -6614,7 +6887,16 @@ function Zeige-DokumenteAnsehen {
         $n = @(Av-Markierte).Count
         $miAuf.Enabled = ($n -gt 0); $miDruck.Enabled = ($n -gt 0); $miOrdner.Enabled = ($n -gt 0)
         $miUm.Enabled = ($n -eq 1); $miZus.Enabled = ($n -ge 2)
-        $miDrehR.Enabled = ($n -eq 1); $miDrehL.Enabled = ($n -eq 1)
+        $miDrehR.Enabled = ($n -eq 1); $miDrehL.Enabled = ($n -eq 1); $miVer.Enabled = ($n -eq 1)
+        $miVer.DropDownItems.Clear()
+        foreach ($z in @(@("Shop", "Shop", ""), @("Kasse", "Kasse", ""))) {
+            $it = $miVer.DropDownItems.Add($z[0]); $it.Tag = @{ Art = $z[1]; MA = $z[2] }
+            $it.Add_Click({ Av-Verschiebe $this.Tag.Art $this.Tag.MA })
+        }
+        foreach ($k in @($MitarbeiterOrdner.Keys | Sort-Object)) {
+            $it = $miVer.DropDownItems.Add("Mitarbeiter: $k"); $it.Tag = @{ Art = "Mitarbeiter"; MA = $k }
+            $it.Add_Click({ Av-Verschiebe $this.Tag.Art $this.Tag.MA })
+        }
     })
     $script:AvListe.ContextMenuStrip = $cm
 
@@ -6624,14 +6906,26 @@ function Zeige-DokumenteAnsehen {
         elseif ($e.KeyCode -eq "Enter" -and $script:AvListe.Focused) { Av-Oeffnen; $e.Handled = $true }
         elseif ($e.KeyCode -eq "PageDown" -and $script:AvVor.Enabled) { $script:AvVor.PerformClick(); $e.Handled = $true }
         elseif ($e.KeyCode -eq "PageUp" -and $script:AvZurueck.Enabled) { $script:AvZurueck.PerformClick(); $e.Handled = $true }
+        elseif ($e.Control -and $e.KeyCode -eq "R") { Av-Dreh 1 $false; $e.Handled = $true }
+        elseif ($e.Control -and $e.KeyCode -eq "L") { Av-Dreh -1 $false; $e.Handled = $true }
+        elseif ($e.Control -and $e.KeyCode -eq "S" -and $script:AvDrehungen.Count -gt 0) { $script:AvBtnSpeichern.PerformClick(); $e.Handled = $true }
+        elseif ($e.Control -and $e.KeyCode -eq "F") { $script:AvFilter.Focus(); $script:AvFilter.SelectAll(); $e.Handled = $true }
     })
 
     $f.Add_Shown({
+        $script:AvBtnSpeichern.BackColor = $script:FarbeAkzent
+        $script:AvBtnSpeichern.ForeColor = [System.Drawing.Color]::White
+        $script:AvBtnSpeichern.FlatAppearance.BorderColor = $script:FarbeAkzent
+        if ($script:SymbolSchrift) { $script:AvBtnSpeichern.Image = Zeichne-Symbol 0xE74E 18 ([System.Drawing.Color]::White) }
+        $script:AvFilter.Focus()
         try { $sc1.SplitterDistance = 250 } catch {}
         try { $sc2.SplitterDistance = [Math]::Max(300, $sc2.Width - 520) } catch {}
         if ($ersterKnoten) { $script:AvBaum.SelectedNode = $ersterKnoten } else { Av-LadeOrdner "" }
     })
+    $f.Add_FormClosing({ try { Av-FrageSpeichern } catch {} })
     $f.Add_FormClosed({
+        Av-StoppeSuche
+        try { $script:AvSuchTimer.Dispose() } catch {}
         try { $script:AvMiniTimer.Stop(); $script:AvMiniTimer.Dispose() } catch {}
         try { $script:AvAuswahlTimer.Stop(); $script:AvAuswahlTimer.Dispose() } catch {}
         try { $script:AvFilterTimer.Stop(); $script:AvFilterTimer.Dispose() } catch {}
@@ -6651,11 +6945,9 @@ $trayIcon.Text = "DiNo1 Druck & Scan ($StandortName)"
 $trayIcon.Visible = $true
 
 $menu = New-Object System.Windows.Forms.ContextMenuStrip
-$menuSuche = $menu.Items.Add("Dokumente suchen...")
+$menuSuche = $menu.Items.Add("Dokumente suchen und ansehen...")
 $menuSuche.Font = New-Object System.Drawing.Font($menuSuche.Font, [System.Drawing.FontStyle]::Bold)
-$menuSuche.Add_Click({ Zeige-Suche })
-$menuAnsehen = $menu.Items.Add("Dokumente ansehen (Vorschau wie PaperPort)...")
-$menuAnsehen.Add_Click({ Zeige-DokumenteAnsehen })
+$menuSuche.Add_Click({ Zeige-DokumenteAnsehen })
 $menuScan = $menu.Items.Add("Jetzt scannen")
 $menuScan.Add_Click({
     $timer.Stop()
@@ -7401,20 +7693,19 @@ function Zeige-Hauptfenster {
         $f.Controls.Add($l)
     }
     $gruppen = @(
-        @{ Titel = "DOKUMENTE ERFASSEN"; Y = 134; Kacheln = @(
+        @{ Titel = "DOKUMENTE ERFASSEN"; Y = 134; Breite = 204; Kacheln = @(
             @("Jetzt scannen",            0xE8FE, $menuScan,          $true),
             @("Scannen (1 Seite)",        0xE8A5, $menuScanFenster,   $false),
             @("$($ue)bersprungene erfassen", 0xE81C, $menuUebersprungen, $false)) },
-        @{ Titel = "DOKUMENTE FINDEN"; Y = 240; Kacheln = @(
-            @("Dokumente suchen",         0xE721, $menuSuche,         $false),
-            @("Dokumente ansehen",        0xE890, $menuAnsehen,       $false),
-            @("Alte Dokumente durchsuchbar", 0xE8F1, $menuAltbestand, $false)) }
+        @{ Titel = "DOKUMENTE FINDEN"; Y = 240; Breite = 312; Kacheln = @(
+            @("Dokumente suchen und ansehen", 0xE721, $menuSuche,      $false),
+            @("Alte Dokumente durchsuchbar machen", 0xE8F1, $menuAltbestand, $false)) }
     )
     foreach ($gr in $gruppen) {
         & $gruppe $gr.Titel $gr.Y
         for ($i = 0; $i -lt $gr.Kacheln.Count; $i++) {
             $k = $gr.Kacheln[$i]
-            $p = Neue-Kachel $f (20 + $i * 216) ($gr.Y + 20) 204 74 $k[0] $k[1] $menueAktion "gross" $k[3]
+            $p = Neue-Kachel $f (20 + $i * ($gr.Breite + 12)) ($gr.Y + 20) $gr.Breite 74 $k[0] $k[1] $menueAktion "gross" $k[3]
             $p.Tag.Menue = $k[2]
             if ($k[2] -eq $menuUebersprungen) { $script:HfUeberKachel = $p }
         }

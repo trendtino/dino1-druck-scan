@@ -80,6 +80,7 @@ Jeder PC prüft beim Start und etwa alle 10 Minuten, ob sich der Programmcode de
 | 41 | Texterkennung für Ausdrucke ohne Text (Dino1 Drucker) |
 | 42 | Dokumente ansehen mit Seitenbildern (wie PaperPort), Programmfenster mit allen Funktionen |
 | 43 | Ansicht: Drehen, Seite entfernen, Anhängen per Ziehen; Programmfenster gruppiert |
+| 44 | Drehen erst in der Vorschau, dann speichern; Suche in der Ansicht; Fehler ins Log |
 | 37 | Admin-Übersicht nur auf freigeschalteten PCs |
 | 36 | Ein Ordner `DiNo1-Druck-Scan` je Shop für alles; Admin-Übersicht aller Shops (Nutzer + Tagesberichte, Abendmeldung) |
 | 35 | Zentrale Mitarbeiterliste, Selbstheilung (Wächter), Suche mit Vorschau/Verschieben/Umbenennen, PDFs zusammenfügen (Drag & Drop + automatisch), Tagesbericht, Altbestand durchsuchbar, Setup im neuen Design |
