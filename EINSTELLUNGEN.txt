@@ -1,4 +1,4 @@
-DiNo1 Druck & Scan - Uebersicht ALLER Einstellungen (Paket 23)
+DiNo1 Druck & Scan - Uebersicht ALLER Einstellungen (Paket 24)
 ================================================================
 Installation von Dino1 GmbH und Andre Meschke
 
@@ -340,3 +340,11 @@ NEU IN PAKET 17 (Version 17)
   Ablagen ALLER PCs des Shops (Suchverzeichnis im Shop-Ordner unter
   DiNo1-Druck-Scan-Status\Suchindex). Erfasst werden Dokumente ab Version
   23; aeltere findet das Haekchen "Auch Dateinamen ... durchsuchen".
+- Version 24: Das Tray-Symbol wird unter Windows 11 automatisch dauerhaft
+  neben der Uhr angezeigt (nicht mehr im ^-Ueberlauf). Neu: Programmfenster
+  mit grossen Knoepfen (Scannen, Suchen, Uebersprungene, Ablage, Ordner,
+  Updates) und HiDrive-Status. Oeffnen ueber die Verknuepfung
+  "DiNo1 Druck und Scan" (wird einmalig auf dem Desktop und im Startmenue
+  angelegt, laesst sich an die Taskleiste anheften) oder Tray -> 
+  "Programmfenster oeffnen". Laeuft der Watcher nicht, startet die
+  Verknuepfung ihn.

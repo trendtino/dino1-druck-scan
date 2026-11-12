@@ -244,7 +244,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "23"
+$script:WatcherVersion      = "24"
 $script:WatcherVersionDatum = "12.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -3851,6 +3851,7 @@ function Pruefe-Zustand {
     Schreibe-Status $z
     Kopiere-LogInShopOrdner
     Kopiere-SuchindexInShop
+    Hefte-TraySymbolAn
 }
 
 function Schreibe-Status($zustand) {
@@ -3906,6 +3907,170 @@ function Schreibe-Status($zustand) {
         $script:StatusFehler = $meldung
     }
 }
+
+# ======================= PROGRAMMFENSTER, VERKNUEPFUNG, SYMBOL ANHEFTEN =======================
+# 1. Tray-Symbol immer sichtbar (Windows 11): In "HKCU\Control Panel\
+#    NotifyIconSettings" fuer unser Symbol IsPromoted=1 setzen - wie
+#    "Einstellungen -> Taskleiste -> Weitere Symbole" von Hand.
+# 2. Programmfenster mit grossen Knoepfen (Scannen, Suchen, ...), zu oeffnen
+#    ueber die Verknuepfung "DiNo1 Druck & Scan" auf dem Desktop / im
+#    Startmenue (laesst sich auch an die Taskleiste anheften) oder ueber
+#    das Tray-Menue (Doppelklick aufs Symbol bleibt "Jetzt scannen").
+#    Die Verknuepfung startet Oeffnen.ps1; das signalisiert dem laufenden
+#    Watcher ueber ein benanntes Ereignis, das Fenster zu zeigen (laeuft keiner,
+#    wird er gestartet).
+
+function Hefte-TraySymbolAn {
+    try {
+        $basis = "HKCU:\Control Panel\NotifyIconSettings"
+        if (-not (Test-Path $basis)) { return }   # Windows 10: dort gibt es das nicht
+        foreach ($k in @(Get-ChildItem -Path $basis -ErrorAction SilentlyContinue)) {
+            $w = Get-ItemProperty -Path $k.PSPath -ErrorAction SilentlyContinue
+            if ("$($w.InitialTooltip)" -like "DiNo1 Druck*" -and [int]$w.IsPromoted -ne 1) {
+                Set-ItemProperty -Path $k.PSPath -Name "IsPromoted" -Value 1 -Type DWord -ErrorAction Stop
+                Schreibe-Log "Tray-Symbol dauerhaft sichtbar gemacht (Taskleiste)."
+            }
+        }
+    } catch {}
+}
+
+$script:FensterEreignisName = "Local\DiNo1DruckScanFenster"
+$script:FensterEreignis = $null
+try { $script:FensterEreignis = New-Object System.Threading.EventWaitHandle($false, [System.Threading.EventResetMode]::AutoReset, $script:FensterEreignisName) } catch {}
+
+function Erstelle-Verknuepfungen {
+    $ordner = Split-Path $script:EigenerPfad
+    $merker = Join-Path $ordner "Verknuepfung_erstellt.txt"
+    $oeffnen = Join-Path $ordner "Oeffnen.ps1"
+    $icoPfad = Join-Path $ordner "DiNo1.ico"
+    try {
+        # Hilfsskript fuer die Verknuepfung (wird bei jedem Start aktualisiert)
+        $inhalt = @'
+# DiNo1 Druck & Scan - Programmfenster oeffnen (wird von der Verknuepfung gestartet)
+$name = "Local\DiNo1DruckScanFenster"
+$ereignis = $null
+try { $ereignis = [System.Threading.EventWaitHandle]::OpenExisting($name) } catch {}
+if (-not $ereignis) {
+    Start-Process -FilePath "conhost.exe" -ArgumentList ("--headless powershell.exe -ExecutionPolicy Bypass -File `"" + (Join-Path $PSScriptRoot "Watcher.ps1") + "`"")
+    for ($i = 0; $i -lt 30 -and -not $ereignis; $i++) {
+        Start-Sleep -Milliseconds 500
+        try { $ereignis = [System.Threading.EventWaitHandle]::OpenExisting($name) } catch {}
+    }
+}
+if ($ereignis) { [void]$ereignis.Set() }
+'@
+        $alt = if (Test-Path $oeffnen) { [System.IO.File]::ReadAllText($oeffnen) } else { "" }
+        if ($alt -ne $inhalt) { [System.IO.File]::WriteAllText($oeffnen, $inhalt, [System.Text.Encoding]::ASCII) }
+        if (-not (Test-Path $icoPfad)) {
+            $fs = [System.IO.File]::Create($icoPfad)
+            try { $trayIcon.Icon.Save($fs) } finally { $fs.Close() }
+        }
+        if (Test-Path $merker) { return }   # nur einmal anlegen - geloeschte Verknuepfungen nicht wieder herstellen
+        $shell = New-Object -ComObject WScript.Shell
+        $ziele = @(
+            (Join-Path ([Environment]::GetFolderPath("Desktop")) "DiNo1 Druck und Scan.lnk"),
+            (Join-Path ([Environment]::GetFolderPath("Programs")) "DiNo1 Druck und Scan.lnk")
+        )
+        foreach ($lnk in $ziele) {
+            $v = $shell.CreateShortcut($lnk)
+            $v.TargetPath = Join-Path $env:WINDIR "System32\conhost.exe"
+            $v.Arguments = "--headless powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$oeffnen`""
+            $v.WorkingDirectory = $ordner
+            $v.IconLocation = "$icoPfad,0"
+            $v.Description = "DiNo1 Druck & Scan - Scannen, Dokumente suchen, Ablage"
+            $v.Save()
+        }
+        Set-Content -Path $merker -Value (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') -Encoding ASCII
+        Schreibe-Log "Verknuepfungen 'DiNo1 Druck und Scan' auf Desktop und im Startmenue angelegt."
+    } catch {
+        Schreibe-Log "HINWEIS: Verknuepfungen konnten nicht angelegt werden: $($_.Exception.Message)"
+    }
+}
+
+$script:Hauptfenster = $null
+function Zeige-Hauptfenster {
+    if ($script:Hauptfenster -and -not $script:Hauptfenster.IsDisposed) {
+        $script:Hauptfenster.WindowState = "Normal"
+        $script:Hauptfenster.Activate()
+        return
+    }
+    $f = New-Object System.Windows.Forms.Form
+    $f.Text = "DiNo1 Druck & Scan - $StandortName"
+    $f.Icon = $trayIcon.Icon
+    $f.FormBorderStyle = "FixedSingle"
+    $f.MaximizeBox = $false
+    $f.StartPosition = "CenterScreen"
+    $f.ClientSize = New-Object System.Drawing.Size(420, 330)
+
+    $kopf = New-Object System.Windows.Forms.Label
+    $kopf.Text = "DiNo1 Druck & Scan"
+    $kopf.Font = New-Object System.Drawing.Font("Segoe UI", 14, [System.Drawing.FontStyle]::Bold)
+    $kopf.Location = New-Object System.Drawing.Point(20, 12)
+    $kopf.AutoSize = $true
+    $f.Controls.Add($kopf)
+
+    $info = New-Object System.Windows.Forms.Label
+    $info.Location = New-Object System.Drawing.Point(22, 45)
+    $info.Size = New-Object System.Drawing.Size(380, 20)
+    $info.ForeColor = [System.Drawing.Color]::DimGray
+    $info.Text = "Standort: $StandortName   -   $($script:EigeneVersionText)"
+    $f.Controls.Add($info)
+
+    $knopf = {
+        param($text, $x, $y, $menuEintrag)
+        $b = New-Object System.Windows.Forms.Button
+        $b.Text = $text
+        $b.Font = New-Object System.Drawing.Font("Segoe UI", 10)
+        $b.Location = New-Object System.Drawing.Point($x, $y)
+        $b.Size = New-Object System.Drawing.Size(180, 48)
+        $b.Tag = $menuEintrag
+        $b.Add_Click({ $this.Tag.PerformClick() })
+        $f.Controls.Add($b)
+        return $b
+    }
+    [void](& $knopf "Jetzt scannen" 20 80 $menuScan)
+    [void](& $knopf "Dokumente suchen" 220 80 $menuSuche)
+    $script:HfBtnUeber = & $knopf "Uebersprungene erfassen" 20 138 $menuUebersprungen
+    [void](& $knopf "Ablage-Ordner oeffnen" 220 138 $menuAblageOeffnen)
+    [void](& $knopf "Ordner anpassen" 20 196 $menuOrdner)
+    [void](& $knopf "Nach Updates suchen" 220 196 $menuUpdate)
+
+    $script:HfStatus = New-Object System.Windows.Forms.Label
+    $script:HfStatus.Location = New-Object System.Drawing.Point(22, 260)
+    $script:HfStatus.Size = New-Object System.Drawing.Size(380, 60)
+    $f.Controls.Add($script:HfStatus)
+
+    # Laeuft spaeter (Fenster ist nicht modal) - deshalb nur $script:-Variablen
+    $aktualisiere = {
+        $n = @(Get-ChildItem -Path $UebersprungenOrdner -Filter "*.pdf" -File -ErrorAction SilentlyContinue).Count
+        $script:HfBtnUeber.Text = "Uebersprungene erfassen ($n)"
+        $script:HfBtnUeber.Enabled = ($n -gt 0)
+        $hd = if (Test-Path $ZielBasis -ErrorAction SilentlyContinue) { "erreichbar" } else { "NICHT erreichbar" }
+        $nu = @(Get-ChildItem -Path $AusweichOrdner -File -Recurse -ErrorAction SilentlyContinue).Count
+        $script:HfStatus.Text = "HiDrive: $hd`nNoch nicht uebertragen: $nu`nLetzte Ablage: $(if ($script:LetzteAblage) { ($script:LetzteAblage -split '  ', 2)[0] } else { '-' })"
+        $script:HfStatus.ForeColor = if ($hd -ne "erreichbar" -or $nu -gt 0) { [System.Drawing.Color]::Firebrick } else { [System.Drawing.Color]::DarkGreen }
+    }
+    $f.Add_Activated($aktualisiere)
+    $script:Hauptfenster = $f
+    $f.Show()
+    $f.Activate()
+}
+
+# Schneller Zusatz-Timer: reagiert auf die Verknuepfung (Fenster zeigen)
+$script:FensterTimer = New-Object System.Windows.Forms.Timer
+$script:FensterTimer.Interval = 400
+$script:FensterTimer.Add_Tick({
+    try {
+        if ($script:FensterEreignis -and $script:FensterEreignis.WaitOne(0)) { Zeige-Hauptfenster }
+    } catch {}
+})
+$script:FensterTimer.Start()
+
+$menuFenster = New-Object System.Windows.Forms.ToolStripMenuItem("Programmfenster oeffnen")
+$menuFenster.Add_Click({ Zeige-Hauptfenster })
+$menu.Items.Insert(0, $menuFenster)
+
+Erstelle-Verknuepfungen
 
 # ======================= HAUPTSCHLEIFE (Timer statt Dauerschleife) =======================
 # Ein WinForms-Timer wird benoetigt, damit gleichzeitig das Tray-Symbol auf
