@@ -1,4 +1,4 @@
-DiNo1 Druck & Scan - Uebersicht ALLER Einstellungen (Paket 28)
+DiNo1 Druck & Scan - Uebersicht ALLER Einstellungen (Paket 29)
 ================================================================
 Installation von Dino1 GmbH und Andre Meschke
 
@@ -30,7 +30,8 @@ HiDrive-Ordner Shop                   [ShopOrdner]
 
 HiDrive-Ordner Kasse                  [KassenOrdner]
   Gemeinsamer Ordner fuer Kassenbelege, z.B. X:\Kasse. Pflichtfeld.
-  Belege werden automatisch in Monatsordner (z.B. "Oktober") sortiert -
+  Belege werden automatisch nach Jahr und Monat sortiert (ab Version 29
+  z.B. "2026\11 November") -
   nach dem Datum, das im Erfassungsfenster gewaehlt wurde.
 
 Update-Quelle (optional)              [UpdateQuelle]
@@ -358,3 +359,7 @@ NEU IN PAKET 17 (Version 17)
 - Version 28: Nach jedem Scan steht eine Zeile "ZEITEN (...)" im Log: wie
   lange Verbinden, Scanner (je Seite), Warten auf das Einzug-Ende, Pruefen
   auf leere Seiten und PDF/Texterkennung gedauert haben.
+- Version 29: Kassenbelege landen in <Kassen-Ordner>\<Jahr>\<MM Monat>,
+  z.B. Kasse\2026\11 November. Vorhandene Jahres-/Monatsordner werden
+  wiederverwendet (auch "2026 Kasse", "11_November", "November"), fehlende
+  werden angelegt. Massgeblich ist das Datum im Erfassungsfenster.

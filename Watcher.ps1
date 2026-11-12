@@ -244,7 +244,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "28"
+$script:WatcherVersion      = "29"
 $script:WatcherVersionDatum = "12.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -628,6 +628,37 @@ function Datei-IstFreigegeben($pfad) {
 
 # Ermittelt den tatsaechlichen Zielordner fuer einen Ablagetyp: normalerweise
 # der HiDrive-Pfad, bei Nichterreichbarkeit automatisch der lokale Ausweichordner.
+# Kassenbelege: <Kassen-Ordner>\<Jahr>\<MM Monat>, z.B. Kasse\2026\11 November.
+# Vorhandene Ordner werden wiederverwendet, auch wenn sie etwas anders
+# heissen (z.B. "2026 Kasse", "11_November", "November", "11"). Fehlt der
+# Jahres- oder Monatsordner, wird er als "2026" bzw. "11 November" angelegt.
+function Ermittle-KassenMonatsordner($kassenBasis, [DateTime]$datum) {
+    $kultur = [System.Globalization.CultureInfo]::GetCultureInfo("de-DE")
+    $jahr = $datum.ToString("yyyy")
+    $monatName = $datum.ToString("MMMM", $kultur)
+    $monatNr = $datum.ToString("MM")
+
+    $jahrOrdner = $null
+    $kandidaten = @(Get-ChildItem -Path $kassenBasis -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "^$jahr(\D|$)" })
+    if ($kandidaten.Count -gt 0) {
+        $genau = @($kandidaten | Where-Object { $_.Name -eq $jahr })
+        $jahrOrdner = if ($genau.Count -gt 0) { $genau[0].FullName } else { $kandidaten[0].FullName }
+    } else {
+        $jahrOrdner = Join-Path $kassenBasis $jahr
+    }
+
+    $monatOrdner = $null
+    if (Test-Path $jahrOrdner -ErrorAction SilentlyContinue) {
+        $nr = [int]$datum.Month
+        $muster = "^0?$nr(\D|$)"
+        foreach ($d in @(Get-ChildItem -Path $jahrOrdner -Directory -ErrorAction SilentlyContinue)) {
+            if ($d.Name -match $muster -or $d.Name -match "(^|\W)$([regex]::Escape($monatName))(\W|$)") { $monatOrdner = $d.FullName; break }
+        }
+    }
+    if (-not $monatOrdner) { $monatOrdner = Join-Path $jahrOrdner "$monatNr $monatName" }
+    return $monatOrdner
+}
+
 function Ermittle-Zielordner($basisPfad, $ausweichUnterordner) {
     if (Test-Path $basisPfad -ErrorAction SilentlyContinue) {
         return $basisPfad
@@ -2576,7 +2607,7 @@ function Ermittle-DateiSchluessel($datei) {
 # dieses wieder erreichbar ist. Aufbau des Ausweich-Ordners (siehe
 # Ermittle-Zielordner):
 #   Nicht_uebertragen\Shop\...               -> $ShopOrdner\...
-#   Nicht_uebertragen\Kasse\<Monat>\...      -> $KassenOrdner\<Monat>\...
+#   Nicht_uebertragen\Kasse\<Jahr>\<MM Monat>\... -> $KassenOrdner\<Jahr>\<MM Monat>\...
 #   Nicht_uebertragen\<Mitarbeiterordner>\... -> $ZielBasis\<Mitarbeiterordner>\...
 # Unbekannte Unterordner (z.B. von Hand angelegte) werden nicht angefasst.
 $script:NachschiebenZaehler = 0
@@ -2708,8 +2739,7 @@ function Verarbeite-Ablage {
                     # erfasste Belege trotzdem im richtigen Monat).
                     $kassenBasis = Ermittle-Zielordner $KassenOrdner "Kasse"
                     $kassenDatum = [DateTime]::ParseExact($eingabe.Datum, "yyyy-MM-dd", $null)
-                    $monatsordner = $kassenDatum.ToString("MMMM", [System.Globalization.CultureInfo]::GetCultureInfo("de-DE"))
-                    $zielOrdner = Join-Path $kassenBasis $monatsordner
+                    $zielOrdner = Ermittle-KassenMonatsordner $kassenBasis $kassenDatum
                 }
             }
 

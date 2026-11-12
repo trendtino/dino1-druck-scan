@@ -67,12 +67,14 @@ Jeder PC prüft beim Start und etwa alle 10 Minuten, ob sich der Programmcode de
 ### Einstellungen
 
 - **Ordner anpassen…** (ab Version 15, überarbeitet in Version 22): Shop-, Kassen-, Mitarbeiter- und lokalen Ordner („Lokaler Ordner (PC)“) nachträglich ändern.
+- **Kassenbelege nach Jahr und Monat** (ab Version 29): Ablage unter `<Kassen-Ordner>\<Jahr>\<MM Monat>`, z. B. `Kasse\2026\11 November`. Vorhandene Jahres- und Monatsordner werden wiederverwendet, fehlende angelegt. Maßgeblich ist das Datum im Erfassungsfenster.
 - **„Über DiNo1 Druck & Scan“** im Tray-Menü zeigt Version und Datum.
 
 ## Versionsübersicht
 
 | Version | Neu |
 |---|---|
+| 29 | Kassenbelege nach Jahr und Monat: `Kasse\2026\11 November` |
 | 28 | Zeitmessung je Scan im Log (Zeile „ZEITEN“) |
 | 27 | Ordner-Knöpfe (Mitarbeiter, Shop, Kasse, Lokal) im Programmfenster |
 | 26 | Doppelklick aufs Tray-Symbol öffnet das Programmfenster |
