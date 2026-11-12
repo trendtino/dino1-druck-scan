@@ -244,7 +244,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "24"
+$script:WatcherVersion      = "25"
 $script:WatcherVersionDatum = "12.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -3924,14 +3924,30 @@ function Hefte-TraySymbolAn {
     try {
         $basis = "HKCU:\Control Panel\NotifyIconSettings"
         if (-not (Test-Path $basis)) { return }   # Windows 10: dort gibt es das nicht
+        $kandidaten = New-Object System.Collections.Generic.List[string]
+        $gefunden = $false
         foreach ($k in @(Get-ChildItem -Path $basis -ErrorAction SilentlyContinue)) {
             $w = Get-ItemProperty -Path $k.PSPath -ErrorAction SilentlyContinue
-            if ("$($w.InitialTooltip)" -like "DiNo1 Druck*" -and [int]$w.IsPromoted -ne 1) {
-                Set-ItemProperty -Path $k.PSPath -Name "IsPromoted" -Value 1 -Type DWord -ErrorAction Stop
-                Schreibe-Log "Tray-Symbol dauerhaft sichtbar gemacht (Taskleiste)."
+            if ("$($w.ExecutablePath)" -notmatch '(?i)powershell\.exe$') { continue }
+            # Windows merkt sich den Text, den das Symbol beim ALLERERSTEN Mal
+            # hatte - bei aelteren Installationen also noch "PaperPort Ersatz ..."
+            $tip = "$($w.InitialTooltip)"
+            [void]$kandidaten.Add("'$tip' (angeheftet: $([int]$w.IsPromoted))")
+            if ($tip -match '(?i)DiNo1|PaperPort|Druck.*Scan') {
+                $gefunden = $true
+                if ([int]$w.IsPromoted -ne 1) {
+                    Set-ItemProperty -Path $k.PSPath -Name "IsPromoted" -Value 1 -Type DWord -ErrorAction Stop
+                    Schreibe-Log "Tray-Symbol dauerhaft sichtbar gemacht (Eintrag '$tip')."
+                }
             }
         }
-    } catch {}
+        if (-not $gefunden -and -not $script:AnheftenGemeldet) {
+            $script:AnheftenGemeldet = $true
+            Schreibe-Log "HINWEIS: Tray-Symbol zum Anheften nicht gefunden. PowerShell-Eintraege: $(if ($kandidaten.Count) { $kandidaten -join '; ' } else { '(keine)' })"
+        }
+    } catch {
+        if (-not $script:AnheftenGemeldet) { $script:AnheftenGemeldet = $true; Schreibe-Log "HINWEIS: Tray-Symbol anheften fehlgeschlagen: $($_.Exception.Message)" }
+    }
 }
 
 $script:FensterEreignisName = "Local\DiNo1DruckScanFenster"

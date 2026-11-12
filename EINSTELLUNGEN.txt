@@ -1,4 +1,4 @@
-DiNo1 Druck & Scan - Uebersicht ALLER Einstellungen (Paket 24)
+DiNo1 Druck & Scan - Uebersicht ALLER Einstellungen (Paket 25)
 ================================================================
 Installation von Dino1 GmbH und Andre Meschke
 
@@ -348,3 +348,6 @@ NEU IN PAKET 17 (Version 17)
   angelegt, laesst sich an die Taskleiste anheften) oder Tray -> 
   "Programmfenster oeffnen". Laeuft der Watcher nicht, startet die
   Verknuepfung ihn.
+- Version 25: Anheften des Tray-Symbols erkennt auch Symbole, die Windows
+  noch unter dem alten Namen "PaperPort ..." kennt; klappt es nicht, steht
+  ein HINWEIS mit den gefundenen Eintraegen im Log.
