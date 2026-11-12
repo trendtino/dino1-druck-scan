@@ -244,7 +244,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "29"
+$script:WatcherVersion      = "30"
 $script:WatcherVersionDatum = "12.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -637,6 +637,13 @@ function Ermittle-KassenMonatsordner($kassenBasis, [DateTime]$datum) {
     $jahr = $datum.ToString("yyyy")
     $monatName = $datum.ToString("MMMM", $kultur)
     $monatNr = $datum.ToString("MM")
+
+    # Ist als Kassen-Ordner schon ein Jahresordner eingetragen (z.B.
+    # "...\Kasse\2026"), gilt dessen uebergeordneter Ordner als Kassen-Ordner -
+    # sonst entstuende "2026\2026\..." bzw. im neuen Jahr "2026\2027\...".
+    $blatt = Split-Path -Path $kassenBasis -Leaf
+    $eltern = Split-Path -Path $kassenBasis -Parent
+    if ($blatt -match '^(19|20)\d\d(\D|$)' -and $eltern) { $kassenBasis = $eltern }
 
     $jahrOrdner = $null
     $kandidaten = @(Get-ChildItem -Path $kassenBasis -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "^$jahr(\D|$)" })

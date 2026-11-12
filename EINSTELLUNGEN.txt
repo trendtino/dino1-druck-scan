@@ -1,4 +1,4 @@
-DiNo1 Druck & Scan - Uebersicht ALLER Einstellungen (Paket 29)
+DiNo1 Druck & Scan - Uebersicht ALLER Einstellungen (Paket 30)
 ================================================================
 Installation von Dino1 GmbH und Andre Meschke
 
@@ -363,3 +363,6 @@ NEU IN PAKET 17 (Version 17)
   z.B. Kasse\2026\11 November. Vorhandene Jahres-/Monatsordner werden
   wiederverwendet (auch "2026 Kasse", "11_November", "November"), fehlende
   werden angelegt. Massgeblich ist das Datum im Erfassungsfenster.
+- Version 30: Ist als Kassen-Ordner schon der Jahresordner eingetragen
+  (z.B. ...\Kasse\2026), wird trotzdem richtig in "2026\11 November"
+  abgelegt und im neuen Jahr "2027" daneben angelegt.
