@@ -446,3 +446,6 @@ NEU IN PAKET 17 (Version 17)
   aller Dokumente. Rechtsklick: Verschieben nach Shop/Kasse/Mitarbeiter.
   Fehler in der Ansicht werden mit genauer Stelle ins Log geschrieben.
   Tastatur: Strg+R/Strg+L drehen, Strg+S speichern, Strg+F Suchfeld.
+- Version 45: Suchtreffer zeigen den Ablageort am Bild ("Meier (Andre Meschke)"),
+  der Ordner wird links im Baum markiert. Rechtsklick "Ordner hier anzeigen"
+  oeffnet den Ordner mit der Datei.

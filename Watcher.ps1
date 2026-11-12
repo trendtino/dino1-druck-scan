@@ -244,7 +244,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "44"
+$script:WatcherVersion      = "45"
 $script:WatcherVersionDatum = "12.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -6382,6 +6382,64 @@ function Av-Verschiebe([string]$art, [string]$mitarbeiter) {
     }
 }
 
+# Knoten im Ordnerbaum zu einem Ordner finden (klappt den Weg dorthin auf)
+function Av-FindeKnoten([string]$dir) {
+    if (-not $dir) { return $null }
+    $dir = $dir.TrimEnd('\')
+    $bester = $null; $laenge = -1
+    $kandidaten = New-Object System.Collections.Generic.List[object]
+    foreach ($n in $script:AvBaum.Nodes) {
+        [void]$kandidaten.Add($n)
+        if (-not [string]$n.Tag) { foreach ($k in $n.Nodes) { [void]$kandidaten.Add($k) } }
+    }
+    foreach ($n in $kandidaten) {
+        $tg = [string]$n.Tag
+        if (-not $tg) { continue }
+        if (($dir -ieq $tg -or $dir.StartsWith($tg + '\', [System.StringComparison]::OrdinalIgnoreCase)) -and $tg.Length -gt $laenge) { $bester = $n; $laenge = $tg.Length }
+    }
+    if (-not $bester) { return $null }
+    $knoten = $bester
+    while ([string]$knoten.Tag -ine $dir) {
+        $knoten.Expand()
+        $weiter = $null
+        foreach ($k in $knoten.Nodes) {
+            $tg = [string]$k.Tag
+            if ($tg -and ($dir -ieq $tg -or $dir.StartsWith($tg + '\', [System.StringComparison]::OrdinalIgnoreCase))) { $weiter = $k; break }
+        }
+        if (-not $weiter) { break }
+        $knoten = $weiter
+    }
+    return $knoten
+}
+
+# Suchtreffer: Ordner links markieren, ohne ihn zu laden
+$script:AvBaumSync = $false
+function Av-MarkiereOrdner([string]$pfad) {
+    try {
+        $k = Av-FindeKnoten ([System.IO.Path]::GetDirectoryName($pfad))
+        if (-not $k) { return }
+        $script:AvBaumSync = $true
+        $script:AvBaum.SelectedNode = $k
+        $k.EnsureVisible()
+    } catch {} finally { $script:AvBaumSync = $false }
+}
+
+# Ordner der Datei oeffnen und die Datei darin markieren
+function Av-ZeigeImOrdner([string]$pfad) {
+    $dir = [System.IO.Path]::GetDirectoryName($pfad)
+    $k = Av-FindeKnoten $dir
+    $script:AvFilter.Text = ""
+    if ($k -and [string]$k.Tag -ieq $dir) {
+        $script:AvBaumSync = $true
+        try { $script:AvBaum.SelectedNode = $k; $k.EnsureVisible() } finally { $script:AvBaumSync = $false }
+    }
+    Av-LadeOrdner $dir
+    $script:AvFilterTimer.Stop()
+    foreach ($it in $script:AvListe.Items) {
+        if ([string]$it.Tag -ieq $pfad) { $it.Selected = $true; $it.Focused = $true; $it.EnsureVisible(); break }
+    }
+}
+
 # ----- Volltextsuche in der Ansicht (laeuft im Hintergrund) -----
 $script:AvSuche = $null
 function Av-StoppeSuche {
@@ -6451,10 +6509,15 @@ function Av-SucheTick {
         $pfad = [string]$zeile[4]
         $name = [string]$zeile[1]
         if (-not $name) { $name = [System.IO.Path]::GetFileNameWithoutExtension($pfad) }
-        $it = New-Object System.Windows.Forms.ListViewItem($name)
+        # Wo liegt die Datei? (z. B. "Andre Meschke, Archiv")
+        $wo = ([string]$zeile[2]) -replace '^Mitarbeiter:\s*', ''
+        $leaf = [System.IO.Path]::GetFileName([System.IO.Path]::GetDirectoryName($pfad))
+        if ($leaf -like "Archiv*") { $wo = "$wo, $leaf" }
+        elseif (-not $wo) { $wo = $leaf }
+        $it = New-Object System.Windows.Forms.ListViewItem(($name + "  (" + $wo + ")"))
         $it.ImageKey = "_leer"
         $it.Tag = $pfad
-        $it.ToolTipText = ([string]$zeile[2] + "  -  " + [string]$zeile[0] + "`n" + [string]$zeile[3])
+        $it.ToolTipText = ([System.IO.Path]::GetDirectoryName($pfad) + "`n" + [string]$zeile[0] + "`n" + [string]$zeile[3])
         if (-not $zeile[5]) { $it.ForeColor = [System.Drawing.Color]::Gray }
         [void]$script:AvListe.Items.Add($it)
         $s.Anzahl++
@@ -6721,8 +6784,18 @@ function Zeige-DokumenteAnsehen {
             } catch {}
         }
     })
+    # Nach einer Suche ist der Ordner des Treffers markiert - Klick darauf oeffnet ihn
+    $script:AvBaum.Add_NodeMouseClick({
+        param($s, $e)
+        if (-not $script:AvOrdner -and [object]::ReferenceEquals($e.Node, $script:AvBaum.SelectedNode) -and [string]$e.Node.Tag) {
+            $script:AvFilter.Text = ""
+            Av-LadeOrdner ([string]$e.Node.Tag)
+            $script:AvFilterTimer.Stop()
+        }
+    })
     $script:AvBaum.Add_AfterSelect({
         param($s, $e)
+        if ($script:AvBaumSync) { return }
         $f.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
         try {
             if ($script:AvSuchbegriff) { $script:AvFilter.Text = "" }
@@ -6758,6 +6831,7 @@ function Zeige-DokumenteAnsehen {
         $m = @(Av-Markierte)
         $p = if ($m.Count -gt 0) { $m[0] } else { $null }
         if ($p -ne $script:AvSeitePfad) { Av-ZeigeSeite $p 0 }
+        if ($p -and -not $script:AvOrdner) { Av-MarkiereOrdner $p }
         $script:AvBtnZus.Enabled = ($m.Count -ge 2)
         $script:AvStatus.Text = $(if ($m.Count -gt 1) { "$($m.Count) markiert - Zusammenf$([char]0x00FC)gen unten rechts" } elseif ($p) { $p } else { "$($script:AvListe.Items.Count) PDF(s)" })
     })
@@ -6855,6 +6929,8 @@ function Zeige-DokumenteAnsehen {
     $cm = New-Object System.Windows.Forms.ContextMenuStrip
     $miAuf = $cm.Items.Add("$([char]0x00D6)ffnen"); $miAuf.Add_Click({ Av-Oeffnen })
     $miDruck = $cm.Items.Add("Drucken"); $miDruck.Add_Click({ $btnDruck.PerformClick() })
+    $miHier = $cm.Items.Add("Ordner hier anzeigen")
+    $miHier.Add_Click({ $m = @(Av-Markierte); if ($m.Count -gt 0) { Av-ZeigeImOrdner $m[0] } })
     $miOrdner = $cm.Items.Add("Im Explorer zeigen")
     $miOrdner.Add_Click({ $m = @(Av-Markierte); if ($m.Count -gt 0) { Start-Process -FilePath "explorer.exe" -ArgumentList "/select,`"$($m[0])`"" } })
     $miUm = $cm.Items.Add("Umbenennen ...")
@@ -6886,6 +6962,7 @@ function Zeige-DokumenteAnsehen {
     $cm.Add_Opening({
         $n = @(Av-Markierte).Count
         $miAuf.Enabled = ($n -gt 0); $miDruck.Enabled = ($n -gt 0); $miOrdner.Enabled = ($n -gt 0)
+        $miHier.Visible = (-not $script:AvOrdner); $miHier.Enabled = ($n -eq 1)
         $miUm.Enabled = ($n -eq 1); $miZus.Enabled = ($n -ge 2)
         $miDrehR.Enabled = ($n -eq 1); $miDrehL.Enabled = ($n -eq 1); $miVer.Enabled = ($n -eq 1)
         $miVer.DropDownItems.Clear()
