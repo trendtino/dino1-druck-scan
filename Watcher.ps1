@@ -244,7 +244,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "39"
+$script:WatcherVersion      = "40"
 $script:WatcherVersionDatum = "12.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -2771,6 +2771,17 @@ function Verarbeite-Ablage {
                 Schreibe-Log "HINWEIS: Ordner '$zielOrdner' existierte noch nicht und wurde neu angelegt - bitte pruefen."
             }
 
+            # Teile wie "Thomas Meier 1" erst in den Unterordner "Teile_warten":
+            # Provitra holt sie dort nicht ab. Nach dem Zusammenfuegen (oder wenn
+            # es nichts zum Zusammenfuegen gibt) kommen sie in den Ordner selbst.
+            if ($script:AutoZusammenfuegen -and $eingabe.Ziel -ne "Lokal" -and (Zerlege-TeilName $basisname)) {
+                $warteOrdner = Join-Path $zielOrdner $script:WarteOrdnerName
+                try {
+                    if (-not (Test-Path $warteOrdner)) { New-Item -ItemType Directory -Path $warteOrdner -Force -ErrorAction Stop | Out-Null }
+                    $zielOrdner = $warteOrdner
+                } catch {}
+            }
+
             $zielpfad = Get-EindeutigerZielpfad $zielOrdner $basisname "pdf"
 
             try {
@@ -3583,6 +3594,31 @@ $script:SuchArbeit = {
         }
         return $false
     }
+    # Provitra verschiebt PDFs nach dem Auslesen in einen Archiv-Ordner im
+    # selben Ordner (Dateiname bleibt) - dort nachsehen
+    function FindeImArchiv([string]$pfad) {
+        try {
+            $name = [System.IO.Path]::GetFileName($pfad)
+            $ordner = [System.IO.Path]::GetDirectoryName($pfad)
+            $basen = @($ordner)
+            $leaf = [System.IO.Path]::GetFileName($ordner)
+            if ($leaf -ieq "Teile_warten" -or $leaf -ieq "Einzelteile") { $basen += [System.IO.Path]::GetDirectoryName($ordner) }
+            foreach ($b in $basen) {
+                if (-not $b -or -not [System.IO.Directory]::Exists($b)) { continue }
+                $direkt = [System.IO.Path]::Combine($b, $name)
+                if ($direkt -ine $pfad -and [System.IO.File]::Exists($direkt)) { return $direkt }
+                foreach ($a in [System.IO.Directory]::GetDirectories($b, "Archiv*")) {
+                    $k = [System.IO.Path]::Combine($a, $name)
+                    if ([System.IO.File]::Exists($k)) { return $k }
+                    foreach ($u in [System.IO.Directory]::GetDirectories($a)) {
+                        $k = [System.IO.Path]::Combine($u, $name)
+                        if ([System.IO.File]::Exists($k)) { return $k }
+                    }
+                }
+            }
+        } catch {}
+        return $null
+    }
     function PasstAlles($text) {
         foreach ($w in $woerter) { if ($text.IndexOf($w, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) { return $false } }
         return $true
@@ -3647,6 +3683,15 @@ $script:SuchArbeit = {
                 $ablage = if ($e.Ziel -eq "Mitarbeiter") { "Mitarbeiter: $($e.Mitarbeiter)" } else { "$($e.Ziel)" }
                 $da = $true
                 try { $da = [System.IO.File]::Exists($pfad) } catch {}
+                if (-not $da) {
+                    $neuPfad = FindeImArchiv $pfad
+                    if ($neuPfad) {
+                        if ($gefunden.Contains($neuPfad)) { continue }
+                        [void]$gefunden.Add($neuPfad)
+                        $zustand.Umzuege.Enqueue([object[]]@($pfad, $neuPfad))
+                        $pfad = $neuPfad; $da = $true
+                    }
+                }
                 $zustand.Treffer.Enqueue([object[]]@([string]$e.Datum, [string]$e.Bezeichnung, $ablage, $fund, $pfad, $da))
                 $anzahl++
             }
@@ -3830,7 +3875,12 @@ function Zeige-Suche {
     $holePfad = {
         $r = $grid.CurrentRow
         if ($null -eq $r -or -not $r.Selected) { if ($grid.SelectedRows.Count -eq 0) { return $null }; $r = $grid.SelectedRows[0] }
-        return [string]$r.Cells["Datei"].Value
+        $p = [string]$r.Cells["Datei"].Value
+        if ($p -and -not (Test-Path -LiteralPath $p)) {
+            $n = Pruefe-ArchivPfad $p
+            if ($n -ne $p) { $r.Cells["Datei"].Value = $n; $r.DefaultCellStyle.ForeColor = [System.Drawing.Color]::Empty; $p = $n }
+        }
+        return $p
     }
 
     # ---- Umbenennen / Verschieben / Zusammenfuegen ----
@@ -3845,6 +3895,7 @@ function Zeige-Suche {
         $zeile = $grid.CurrentRow
         if ($null -eq $zeile) { return }
         $p = [string]$zeile.Cells["Datei"].Value
+        if ($p -and -not (Test-Path -LiteralPath $p)) { $n = Pruefe-ArchivPfad $p; if ($n -ne $p) { $zeile.Cells["Datei"].Value = $n; $zeile.DefaultCellStyle.ForeColor = [System.Drawing.Color]::Empty; $p = $n } }
         if (-not (Test-Path $p)) { [System.Windows.Forms.MessageBox]::Show($form, "Die Datei ist nicht (mehr) erreichbar:`n$p", "Umbenennen") | Out-Null; return }
         $neuName = Frage-Text "Umbenennen" "Neuer Dateiname (ohne .pdf):" ([System.IO.Path]::GetFileNameWithoutExtension($p))
         if ([string]::IsNullOrWhiteSpace($neuName)) { return }
@@ -3860,6 +3911,7 @@ function Zeige-Suche {
         $zeile = $grid.CurrentRow
         if ($null -eq $zeile) { return }
         $p = [string]$zeile.Cells["Datei"].Value
+        if ($p -and -not (Test-Path -LiteralPath $p)) { $n = Pruefe-ArchivPfad $p; if ($n -ne $p) { $zeile.Cells["Datei"].Value = $n; $zeile.DefaultCellStyle.ForeColor = [System.Drawing.Color]::Empty; $p = $n } }
         if (-not (Test-Path $p)) { [System.Windows.Forms.MessageBox]::Show($form, "Die Datei ist nicht (mehr) erreichbar:`n$p", "Verschieben") | Out-Null; return }
         try {
             $datum = [string]$zeile.Cells["Datum"].Value
@@ -3979,6 +4031,15 @@ function Zeige-Suche {
         if ($n -gt 0) { $grid.ResumeLayout() }
         if ($z.Fertig -and $z.Treffer.Count -eq 0) {
             $timer.Stop()
+            # Im Archiv gefundene Dateien: neuen Ort im Suchverzeichnis merken
+            $umzug = $null; $u = 0
+            while ($u -lt 20 -and $z.Umzuege -and $z.Umzuege.TryDequeue([ref]$umzug)) {
+                $u++
+                try {
+                    $abl = Ermittle-AblageFuerPfad $umzug[1]
+                    Merke-Verschiebung $umzug[0] $umzug[1] $abl.Ziel $abl.Mitarbeiter ([System.IO.Path]::GetFileNameWithoutExtension($umzug[1]) -replace '^\d{4}-\d{2}-\d{2}_', '')
+                } catch {}
+            }
             try { if ($lauf.PS) { $lauf.PS.Dispose() } } catch {}
             $lauf.PS = $null
             $btnStopp.Enabled = $false
@@ -4008,6 +4069,7 @@ function Zeige-Suche {
             Abbrechen = $false; Fertig = $false; Fehler = ""; ZuViele = $false
             Status = "Suche laeuft ..."
             Treffer = New-Object 'System.Collections.Concurrent.ConcurrentQueue[object]'
+            Umzuege = New-Object 'System.Collections.Concurrent.ConcurrentQueue[object]'
         })
         $lauf.Zustand = $zustand
 
@@ -4587,6 +4649,43 @@ function Merke-Verschiebung($altPfad, $neuPfad, $ziel, $mitarbeiter, $bezeichnun
     }
 }
 
+# Provitra liest PDFs aus dem Mitarbeiter-Ordner aus und verschiebt sie danach
+# in den Archiv-Ordner darunter (Dateiname bleibt). Gibt den neuen Pfad oder $null.
+function Finde-ArchivPfad([string]$pfad) {
+    try {
+        if (-not $pfad) { return $null }
+        $name = [System.IO.Path]::GetFileName($pfad)
+        $ordner = [System.IO.Path]::GetDirectoryName($pfad)
+        $basen = @($ordner)
+        $leaf = [System.IO.Path]::GetFileName($ordner)
+        if ($leaf -ieq $script:WarteOrdnerName -or $leaf -ieq $script:EinzelteileOrdnerName) { $basen += [System.IO.Path]::GetDirectoryName($ordner) }
+        foreach ($b in $basen) {
+            if (-not $b -or -not [System.IO.Directory]::Exists($b)) { continue }
+            $direkt = Join-Path $b $name
+            if ($direkt -ine $pfad -and [System.IO.File]::Exists($direkt)) { return $direkt }
+            foreach ($a in [System.IO.Directory]::GetDirectories($b, "Archiv*")) {
+                $k = Join-Path $a $name
+                if ([System.IO.File]::Exists($k)) { return $k }
+                foreach ($u in [System.IO.Directory]::GetDirectories($a)) {
+                    $k = Join-Path $u $name
+                    if ([System.IO.File]::Exists($k)) { return $k }
+                }
+            }
+        }
+    } catch {}
+    return $null
+}
+
+# Datei weg? -> im Archiv suchen und den neuen Ort im Suchverzeichnis merken
+function Pruefe-ArchivPfad([string]$pfad) {
+    if (-not $pfad -or (Test-Path -LiteralPath $pfad)) { return $pfad }
+    $neu = Finde-ArchivPfad $pfad
+    if (-not $neu) { return $pfad }
+    $abl = Ermittle-AblageFuerPfad $neu
+    Merke-Verschiebung $pfad $neu $abl.Ziel $abl.Mitarbeiter ([System.IO.Path]::GetFileNameWithoutExtension($neu) -replace '^\d{4}-\d{2}-\d{2}_', '')
+    return $neu
+}
+
 # Zielordner fuer "Verschieben nach": Mitarbeiter (Name), "Shop" oder "Kasse"
 function Ermittle-VerschiebeZiel($art, $mitarbeiter, $datum) {
     switch ($art) {
@@ -4774,7 +4873,18 @@ function Fuehre-AltbestandIndexierungAus {
             try { $dateien = [System.IO.Directory]::GetFiles($dir, "*.pdf") } catch {}
             foreach ($f in $dateien) {
                 if ($bekannt.Contains($f) -or -not $gesehen.Add($f)) { continue }
-                [void]$liste.Add([pscustomobject]@{ Pfad = $f; Ziel = $ziel; Mitarbeiter = $mitarbeiter })
+                # Von Provitra ins Archiv verschoben? Dann alten Pfad ausblenden
+                $altPfad = ""
+                $o = [System.IO.Path]::GetDirectoryName($f)
+                for ($i = 0; $i -lt 2 -and $o; $i++) {
+                    if ([System.IO.Path]::GetFileName($o) -like "Archiv*") {
+                        $kand = [System.IO.Path]::Combine([System.IO.Path]::GetDirectoryName($o), [System.IO.Path]::GetFileName($f))
+                        if ($bekannt.Contains($kand)) { $altPfad = $kand }
+                        break
+                    }
+                    $o = [System.IO.Path]::GetDirectoryName($o)
+                }
+                [void]$liste.Add([pscustomobject]@{ Pfad = $f; Ziel = $ziel; Mitarbeiter = $mitarbeiter; Alt = $altPfad })
             }
             if (((Get-Date) - $letzteMeldung).TotalSeconds -ge 1) {
                 Schreibe-IndexFortschritt "Suche" $liste.Count 0 0 0 $dir
@@ -4822,6 +4932,7 @@ function Fuehre-AltbestandIndexierungAus {
             Mitarbeiter = $e.Mitarbeiter; Bezeichnung = $name; Pfad = $f; PC = $env:COMPUTERNAME
             Text = $text; Quelle = "Altbestand"
         }
+        if ($e.Alt) { $eintrag["Alt"] = $e.Alt }
         try { [System.IO.File]::AppendAllText($script:AltbestandIndex, (($eintrag | ConvertTo-Json -Compress -Depth 2) + "`r`n"), (New-Object System.Text.UTF8Encoding($false))) } catch {}
         $neu++; $seitLetzterKopie++
         if ($seitLetzterKopie -ge 20) {
@@ -5039,6 +5150,9 @@ function Zeige-IndexFortschritt {
 #    "Einzelteile". Voraussetzung: Teil 1 ist dabei.
 $script:AutoZusammenfuegen = $true
 $script:EinzelteileOrdnerName = "Einzelteile"
+$script:WarteOrdnerName = "Teile_warten"
+$script:WarteListeDatei = Join-Path $script:DatenOrdner "Teile_warten_Ordner.txt"
+$script:WarteLetzterCheck = [DateTime]::MinValue
 $script:ZusammenKandidaten = @{}
 $script:ZahlWoerter = @{ "eins" = 1; "ein" = 1; "zwei" = 2; "drei" = 3; "vier" = 4; "fuenf" = 5; "sechs" = 6; "sieben" = 7; "acht" = 8; "neun" = 9; "zehn" = 10 }
 $script:ZahlWoerter[("f" + [char]0x00FC + "nf")] = 5
@@ -5101,6 +5215,7 @@ function Fuege-PdfsZusammen($dateien, $zielPfad, [bool]$einzelteileWegraeumen) {
                 if (-not (Test-Path $d)) { continue }
                 $ordner = Split-Path $d -Parent
                 if ((Split-Path $ordner -Leaf) -ieq $script:EinzelteileOrdnerName) { continue }   # liegt schon dort
+                if ((Split-Path $ordner -Leaf) -ieq $script:WarteOrdnerName) { $ordner = Split-Path $ordner -Parent }
                 $teileOrdner = Join-Path $ordner $script:EinzelteileOrdnerName
                 if (-not (Test-Path $teileOrdner)) { New-Item -ItemType Directory -Path $teileOrdner -Force | Out-Null }
                 $neu = Get-EindeutigerZielpfad $teileOrdner ([System.IO.Path]::GetFileNameWithoutExtension($d)) "pdf"
@@ -5129,20 +5244,77 @@ function Merke-ZusammenKandidat($zielpfad) {
     $t = Zerlege-TeilName ([System.IO.Path]::GetFileNameWithoutExtension($zielpfad))
     if (-not $t) { return }
     $ordner = Split-Path $zielpfad -Parent
+    if ((Split-Path $ordner -Leaf) -ieq $script:WarteOrdnerName) {
+        $ordner = Split-Path $ordner -Parent
+        Merke-WarteOrdner $ordner
+    }
     $script:ZusammenKandidaten[($ordner + "|" + $t.Schluessel)] = @{ Ordner = $ordner; Schluessel = $t.Schluessel; Zeit = (Get-Date) }
+}
+
+# Ordner mit "Teile_warten" merken, damit nach einem Neustart nichts liegen bleibt
+function Merke-WarteOrdner($ordner) {
+    try {
+        $liste = @()
+        if (Test-Path $script:WarteListeDatei) { $liste = @([System.IO.File]::ReadAllLines($script:WarteListeDatei, [System.Text.Encoding]::UTF8) | Where-Object { $_.Trim() }) }
+        if ($liste -contains $ordner) { return }
+        $liste += $ordner
+        [System.IO.File]::WriteAllLines($script:WarteListeDatei, [string[]]$liste, (New-Object System.Text.UTF8Encoding($false)))
+    } catch {}
+}
+
+# Alle 5 Minuten: liegengebliebene Teile (z. B. nach Neustart) wieder einplanen
+function Pruefe-WarteOrdner {
+    if (((Get-Date) - $script:WarteLetzterCheck).TotalMinutes -lt 5) { return }
+    $script:WarteLetzterCheck = Get-Date
+    try {
+        if (-not (Test-Path $script:WarteListeDatei)) { return }
+        foreach ($ordner in @([System.IO.File]::ReadAllLines($script:WarteListeDatei, [System.Text.Encoding]::UTF8))) {
+            if (-not $ordner.Trim()) { continue }
+            $warte = Join-Path $ordner $script:WarteOrdnerName
+            foreach ($f in @(Get-ChildItem -Path $warte -Filter "*.pdf" -File -ErrorAction SilentlyContinue)) {
+                $t = Zerlege-TeilName $f.BaseName
+                $schluessel = if ($t) { $t.Schluessel } else { "?" + $f.BaseName.ToLowerInvariant() }
+                $k = $ordner + "|" + $schluessel
+                if (-not $script:ZusammenKandidaten.ContainsKey($k)) {
+                    $script:ZusammenKandidaten[$k] = @{ Ordner = $ordner; Schluessel = $schluessel; Zeit = (Get-Date).AddMinutes(-3) }
+                }
+            }
+        }
+    } catch {}
+}
+
+# Teile aus "Teile_warten" in den eigentlichen Ordner schieben (fuer Provitra)
+function Gib-WarteteileFrei($ordner, $schluessel) {
+    $warte = Join-Path $ordner $script:WarteOrdnerName
+    foreach ($f in @(Get-ChildItem -Path $warte -Filter "*.pdf" -File -ErrorAction SilentlyContinue)) {
+        $t = Zerlege-TeilName $f.BaseName
+        $fs = if ($t) { $t.Schluessel } else { "?" + $f.BaseName.ToLowerInvariant() }
+        if ($fs -ne $schluessel) { continue }
+        try {
+            $neu = Get-EindeutigerZielpfad $ordner $f.BaseName "pdf"
+            Move-Item -LiteralPath $f.FullName -Destination $neu -ErrorAction Stop
+            $abl = Ermittle-AblageFuerPfad $neu
+            Merke-Verschiebung $f.FullName $neu $abl.Ziel $abl.Mitarbeiter ($f.BaseName -replace '^\d{4}-\d{2}-\d{2}_', '')
+            Schreibe-Log "Teil ohne weitere Teile abgelegt: $neu"
+        } catch {
+            Schreibe-Log "FEHLER beim Ablegen von $($f.FullName): $($_.Exception.Message)"
+        }
+    }
 }
 
 # Jede Minute: Gruppen, bei denen seit 2 Minuten kein Teil dazukam, zusammenfuegen
 function Pruefe-AutoZusammenfuegen {
+    Pruefe-WarteOrdner
     if ($script:ZusammenKandidaten.Count -eq 0) { return }
     foreach ($k in @($script:ZusammenKandidaten.Keys)) {
         $c = $script:ZusammenKandidaten[$k]
         if (((Get-Date) - $c.Zeit).TotalMinutes -lt 2) { continue }
         $script:ZusammenKandidaten.Remove($k)
+        $zusammengefuegt = $false
         try {
             $teile = New-Object System.Collections.Generic.List[object]
             $teileOrdner = Join-Path $c.Ordner $script:EinzelteileOrdnerName
-            foreach ($o in @($c.Ordner, $teileOrdner)) {
+            foreach ($o in @($c.Ordner, $teileOrdner, (Join-Path $c.Ordner $script:WarteOrdnerName))) {
                 foreach ($f in @(Get-ChildItem -Path $o -Filter "*.pdf" -File -ErrorAction SilentlyContinue)) {
                     $t = Zerlege-TeilName $f.BaseName
                     if ($t -and $t.Schluessel -eq $c.Schluessel) { [void]$teile.Add([PSCustomObject]@{ Pfad = $f.FullName; Nr = $t.Nr; Info = $t }) }
@@ -5158,10 +5330,13 @@ function Pruefe-AutoZusammenfuegen {
             $erstes = $jeNr[1].Info
             $ziel = Join-Path $c.Ordner ((Sanitize-Dateiname ($erstes.Datum + $erstes.Name)) + ".pdf")
             Fuege-PdfsZusammen $sortiert $ziel $true | Out-Null
+            $zusammengefuegt = $true
             $trayIcon.ShowBalloonTip(8000, "DiNo1 Druck & Scan", "$($jeNr.Count) Teile zu '$([System.IO.Path]::GetFileName($ziel))' zusammengefuegt.", [System.Windows.Forms.ToolTipIcon]::Info)
         } catch {
             Schreibe-Log "FEHLER beim automatischen Zusammenfuegen ($($c.Schluessel)): $($_.Exception.Message)"
         }
+        # Nicht zusammengefuegt (nur ein Teil, kein Teil 1, Fehler): Teile trotzdem ablegen
+        if (-not $zusammengefuegt) { Gib-WarteteileFrei $c.Ordner $c.Schluessel }
     }
 }
 

@@ -418,3 +418,10 @@ NEU IN PAKET 17 (Version 17)
 - Version 39: "Alte Dokumente durchsuchbar machen" zeigt ein Fenster mit
   Ladebalken (x von y Dokumenten, Prozent, Restzeit). Abbrechen moeglich,
   Fenster schliessen laesst die Indexierung im Hintergrund weiterlaufen.
+- Version 40: Zusammenarbeit mit Provitra. Provitra verschiebt PDFs nach dem
+  Auslesen in den Archiv-Ordner im Mitarbeiter-Ordner: Die Suche findet sie dort
+  (Unterordner "Archiv*", auch eine Ebene tiefer) und merkt sich den neuen Ort.
+  Teile wie "Thomas Meier 1", "Thomas Meier zwei" landen zuerst in
+  "Teile_warten" (holt Provitra nicht ab), werden zusammengefuegt und erst dann
+  im Ordner abgelegt. Gibt es nichts zum Zusammenfuegen, kommt das Teil nach
+  2 Minuten trotzdem in den Ordner.
