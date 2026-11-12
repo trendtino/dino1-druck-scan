@@ -409,3 +409,6 @@ NEU IN PAKET 17 (Version 17)
     abgelegt) und die Tagesberichte aller Shops fuer einen waehlbaren Tag.
     Haekchen "Jeden Abend 18:30 melden" = Gesamtbericht als Meldung.
   * Tagesbericht wird jetzt immer um 18:00 im DiNo1-Ordner gespeichert.
+- Version 37: Der Admin-Eintrag "Alle Shops ..." erscheint nur noch auf
+  freigeschalteten PCs. Freischalten: Admin-freischalten.cmd aus dem Paket
+  einmal doppelklicken (legt C:\PaperPortErsatz\Admin.txt an).

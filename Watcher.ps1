@@ -244,7 +244,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "36"
+$script:WatcherVersion      = "37"
 $script:WatcherVersionDatum = "12.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -5178,6 +5178,7 @@ function Ziehe-StatusOrdnerUm {
 $script:AdminWurzelDatei   = Join-Path $script:DatenOrdner "Admin_Shops-Ordner.txt"
 $script:AdminAnDatei       = Join-Path $script:DatenOrdner ("Admin_Gesamtbericht_" + (Sanitize-Dateiname $env:USERNAME) + ".txt")
 $script:AdminBerichtUhrzeit = "18:30"
+$script:AdminFreigabeDatei = Join-Path $script:DatenOrdner "Admin.txt"
 
 function Get-AdminWurzel {
     try { if (Test-Path $script:AdminWurzelDatei) { $w = ([System.IO.File]::ReadAllText($script:AdminWurzelDatei)).Trim(); if ($w) { return $w } } } catch {}
@@ -5375,7 +5376,7 @@ function Zeige-AdminUebersicht([int]$startSeite = 0) {
 $script:AdminMerker = Join-Path $script:DatenOrdner ("Admin_Gesamtbericht_gemeldet_" + (Sanitize-Dateiname $env:USERNAME) + ".txt")
 function Pruefe-Gesamtbericht {
     try {
-        if (-not (Test-Path $script:AdminAnDatei)) { return }
+        if (-not (Test-Path $script:AdminAnDatei) -or -not (Test-Path $script:AdminFreigabeDatei)) { return }
         $jetzt = Get-Date
         $grenze = [DateTime]::ParseExact($jetzt.ToString("yyyy-MM-dd") + " " + $script:AdminBerichtUhrzeit, "yyyy-MM-dd HH:mm", $null)
         if ($jetzt -lt $grenze) { return }
@@ -5475,6 +5476,9 @@ $menuBericht = $menu.Items.Add("Tagesbericht anzeigen")
 $menuBericht.Add_Click({ Zeige-Tagesbericht })
 $menuAdmin = $menu.Items.Add("Alle Shops: Nutzer und Tagesberichte (Admin)...")
 $menuAdmin.Add_Click({ Zeige-AdminUebersicht 0 })
+# Nur auf freigeschalteten Admin-PCs sichtbar (Datei Admin.txt, angelegt von Admin-freischalten.cmd)
+$menuAdmin.Visible = (Test-Path $script:AdminFreigabeDatei)
+$menu.Add_Opening({ $menuAdmin.Visible = (Test-Path $script:AdminFreigabeDatei) })
 $menuAltbestand = $menu.Items.Add("Alte Dokumente durchsuchbar machen")
 $menuAltbestand.Add_Click({
     Starte-AltbestandIndexierung

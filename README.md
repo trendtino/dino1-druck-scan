@@ -74,6 +74,7 @@ Jeder PC prüft beim Start und etwa alle 10 Minuten, ob sich der Programmcode de
 
 | Version | Neu |
 |---|---|
+| 37 | Admin-Übersicht nur auf freigeschalteten PCs (`Admin-freischalten.cmd`) |
 | 36 | Ein Ordner `DiNo1-Druck-Scan` je Shop für alles; Admin-Übersicht aller Shops (Nutzer + Tagesberichte, Abendmeldung) |
 | 35 | Zentrale Mitarbeiterliste, Selbstheilung (Wächter), Suche mit Vorschau/Verschieben/Umbenennen, PDFs zusammenfügen (Drag & Drop + automatisch), Tagesbericht, Altbestand durchsuchbar, Setup im neuen Design |
 | 34 | Fußzeile „© DiNo1 GmbH – Andre Meschke“ im Programmfenster |
