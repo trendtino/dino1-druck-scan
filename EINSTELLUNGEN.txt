@@ -412,3 +412,6 @@ NEU IN PAKET 17 (Version 17)
 - Version 37: Der Admin-Eintrag "Alle Shops ..." erscheint nur noch auf
   freigeschalteten PCs. Freischalten: Admin-freischalten.cmd aus dem Paket
   einmal doppelklicken (legt C:\PaperPortErsatz\Admin.txt an).
+- Version 38: Statt Freischalten je PC: Der Eintrag "Alle Shops ..." ist auf
+  allen PCs sichtbar, oeffnet sich aber nur mit dem Admin-Passwort (einmal je
+  Programmstart). Admin-freischalten.cmd entfaellt.

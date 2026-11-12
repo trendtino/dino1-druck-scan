@@ -244,7 +244,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "37"
+$script:WatcherVersion      = "38"
 $script:WatcherVersionDatum = "12.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -4623,7 +4623,7 @@ function Verschiebe-Dokument($pfad, $zielOrdner, $neuerName, $ziel, $mitarbeiter
 }
 
 # Kleines Eingabefenster (Text). Rueckgabe: Text oder $null bei Abbruch.
-function Frage-Text($titel, $frage, $vorgabe) {
+function Frage-Text($titel, $frage, $vorgabe, [bool]$verdeckt = $false) {
     $f = New-Object System.Windows.Forms.Form
     $f.Add_Load({ Setze-Design $this })
     $f.Text = $titel
@@ -4638,6 +4638,7 @@ function Frage-Text($titel, $frage, $vorgabe) {
     $t = New-Object System.Windows.Forms.TextBox
     $t.Location = New-Object System.Drawing.Point(12, 36); $t.Width = 436
     $t.Text = $vorgabe
+    $t.UseSystemPasswordChar = $verdeckt
     $f.Controls.Add($t)
     $ok = New-Object System.Windows.Forms.Button
     $ok.Text = "OK"; $ok.DialogResult = [System.Windows.Forms.DialogResult]::OK
@@ -5178,7 +5179,30 @@ function Ziehe-StatusOrdnerUm {
 $script:AdminWurzelDatei   = Join-Path $script:DatenOrdner "Admin_Shops-Ordner.txt"
 $script:AdminAnDatei       = Join-Path $script:DatenOrdner ("Admin_Gesamtbericht_" + (Sanitize-Dateiname $env:USERNAME) + ".txt")
 $script:AdminBerichtUhrzeit = "18:30"
-$script:AdminFreigabeDatei = Join-Path $script:DatenOrdner "Admin.txt"
+# Admin-Passwort: nur ein Pruefwert (PBKDF2, 100000 Runden) steht hier, nicht das Passwort selbst
+$script:AdminSalz      = "tD43/DErJMvkVPGV59jR3g=="
+$script:AdminPruefwert = "1nyIWNrOSA4+WNEs2nuOKmEesw/YALQlreOn4A3gJJo="
+$script:AdminEntsperrt = $false
+
+function Pruefe-AdminPasswort([string]$passwort) {
+    try {
+        $kdf = New-Object System.Security.Cryptography.Rfc2898DeriveBytes($passwort, [Convert]::FromBase64String($script:AdminSalz), 100000)
+        $wert = [Convert]::ToBase64String($kdf.GetBytes(32))
+        $kdf.Dispose()
+        return ($wert -ceq $script:AdminPruefwert)
+    } catch { return $false }
+}
+
+# Fragt das Admin-Passwort ab (einmal je Programmstart). $true = richtig.
+function Frage-AdminPasswort {
+    if ($script:AdminEntsperrt) { return $true }
+    $pw = Frage-Text "Admin-Bereich" "Admin-Passwort:" "" $true
+    if ($null -eq $pw) { return $false }
+    if (Pruefe-AdminPasswort $pw) { $script:AdminEntsperrt = $true; return $true }
+    Schreibe-Log "Admin-Bereich: falsches Passwort eingegeben."
+    [System.Windows.Forms.MessageBox]::Show("Das Passwort ist nicht richtig.", "Admin-Bereich", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null
+    return $false
+}
 
 function Get-AdminWurzel {
     try { if (Test-Path $script:AdminWurzelDatei) { $w = ([System.IO.File]::ReadAllText($script:AdminWurzelDatei)).Trim(); if ($w) { return $w } } } catch {}
@@ -5239,6 +5263,7 @@ function Lese-AlleTagesberichte($wurzel, [DateTime]$tag) {
 }
 
 function Zeige-AdminUebersicht([int]$startSeite = 0) {
+    if (-not (Frage-AdminPasswort)) { return }
     $script:AdminWurzel = Get-AdminWurzel
     $form = New-Object System.Windows.Forms.Form
     $form.Add_Load({ Setze-Design $this })
@@ -5376,7 +5401,7 @@ function Zeige-AdminUebersicht([int]$startSeite = 0) {
 $script:AdminMerker = Join-Path $script:DatenOrdner ("Admin_Gesamtbericht_gemeldet_" + (Sanitize-Dateiname $env:USERNAME) + ".txt")
 function Pruefe-Gesamtbericht {
     try {
-        if (-not (Test-Path $script:AdminAnDatei) -or -not (Test-Path $script:AdminFreigabeDatei)) { return }
+        if (-not (Test-Path $script:AdminAnDatei)) { return }
         $jetzt = Get-Date
         $grenze = [DateTime]::ParseExact($jetzt.ToString("yyyy-MM-dd") + " " + $script:AdminBerichtUhrzeit, "yyyy-MM-dd HH:mm", $null)
         if ($jetzt -lt $grenze) { return }
@@ -5476,9 +5501,6 @@ $menuBericht = $menu.Items.Add("Tagesbericht anzeigen")
 $menuBericht.Add_Click({ Zeige-Tagesbericht })
 $menuAdmin = $menu.Items.Add("Alle Shops: Nutzer und Tagesberichte (Admin)...")
 $menuAdmin.Add_Click({ Zeige-AdminUebersicht 0 })
-# Nur auf freigeschalteten Admin-PCs sichtbar (Datei Admin.txt, angelegt von Admin-freischalten.cmd)
-$menuAdmin.Visible = (Test-Path $script:AdminFreigabeDatei)
-$menu.Add_Opening({ $menuAdmin.Visible = (Test-Path $script:AdminFreigabeDatei) })
 $menuAltbestand = $menu.Items.Add("Alte Dokumente durchsuchbar machen")
 $menuAltbestand.Add_Click({
     Starte-AltbestandIndexierung
