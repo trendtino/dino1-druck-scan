@@ -380,3 +380,4 @@ NEU IN PAKET 17 (Version 17)
 - Version 33: Desktop- und Startmenue-Verknuepfungen bekommen das neue
   Dino-Symbol, "DiNo1 neu starten" ein eigenes orangefarbenes Neustart-Symbol
   (auch bereits vorhandene Verknuepfungen werden umgestellt).
+- Version 34: Fusszeile im Programmfenster "(c) DiNo1 GmbH - Andre Meschke".

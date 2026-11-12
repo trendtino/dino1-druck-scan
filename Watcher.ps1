@@ -244,7 +244,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "33"
+$script:WatcherVersion      = "34"
 $script:WatcherVersionDatum = "12.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -4686,7 +4686,7 @@ function Zeige-Hauptfenster {
     }
 
     $fuss = New-Object System.Windows.Forms.Label
-    $fuss.Text = "$([char]0x00A9) DiNo1 GmbH"
+    $fuss.Text = "$([char]0x00A9) DiNo1 GmbH  -  Andre Meschke"
     $fuss.Font = New-Object System.Drawing.Font("Segoe UI", 8)
     $fuss.ForeColor = $script:FarbeGrau
     $fuss.Location = New-Object System.Drawing.Point(22, 597)
