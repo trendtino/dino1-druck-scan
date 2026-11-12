@@ -399,3 +399,13 @@ NEU IN PAKET 17 (Version 17)
   * Altbestand: alte PDFs im Shop- und in den Mitarbeiter-Ordnern werden im
     Hintergrund (niedrige Prioritaet) gelesen und durchsuchbar gemacht.
   * Setup im neuen Design mit Logo.
+- Version 36:
+  * Alles, was DiNo1 im Shop ablegt, liegt jetzt in EINEM Ordner
+    "<Shop-Ordner>\DiNo1-Druck-Scan" (Statusdateien, Logs, Suchindex, Berichte,
+    DiNo1-Mitarbeiter.txt). Der alte Ordner "DiNo1-Druck-Scan-Status" und eine
+    Mitarbeiterliste direkt im Shop-Ordner werden automatisch umgezogen.
+  * Admin: Tray -> "Alle Shops: Nutzer und Tagesberichte (Admin)..." zeigt alle
+    PCs aller Shops (wer nutzt die App, Version, zuletzt aktiv, heute/gesamt
+    abgelegt) und die Tagesberichte aller Shops fuer einen waehlbaren Tag.
+    Haekchen "Jeden Abend 18:30 melden" = Gesamtbericht als Meldung.
+  * Tagesbericht wird jetzt immer um 18:00 im DiNo1-Ordner gespeichert.

@@ -178,8 +178,8 @@ $VorschauAktiv = $true
 # Ordner, in den dieser PC alle paar Minuten eine kleine Statusdatei schreibt
 # (Version, letzte Ablage, Fehler, wartende Dateien). Uebersicht.cmd zeigt
 # daraus alle PCs auf einen Blick. Leer lassen = Ordner
-# "DiNo1-Druck-Scan-Status" im Shop-Ordner (z.B. "Y:\o2 shops\o2 Partnershop
-# Vechta\DiNo1-Druck-Scan-Status"). "-" = keine Statusdatei schreiben.
+# "DiNo1-Druck-Scan" im Shop-Ordner (z.B. "Y:\o2 shops\o2 Partnershop
+# Vechta\DiNo1-Druck-Scan"). "-" = keine Statusdatei schreiben.
 $StatusOrdner = ""
 
 # Lokaler Ausweich-Ordner, falls HiDrive gerade nicht erreichbar ist
@@ -244,7 +244,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "35"
+$script:WatcherVersion      = "36"
 $script:WatcherVersionDatum = "12.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -265,8 +265,11 @@ if ($UpdateQuelle -eq "https://raw.githubusercontent.com/trendtino/paperport-ers
 if ([string]::IsNullOrWhiteSpace($LokalerOrdner)) {
     $LokalerOrdner = Join-Path ([Environment]::GetFolderPath("MyDocuments")) "Scans"
 }
+$script:StatusOrdnerStandard = $false
 if ([string]::IsNullOrWhiteSpace($StatusOrdner)) {
-    try { $StatusOrdner = Join-Path $ShopOrdner "DiNo1-Druck-Scan-Status" } catch { $StatusOrdner = "-" }
+    # Alles, was DiNo1 Druck & Scan im Shop ablegt (Status, Logs, Suchindex,
+    # Berichte, Mitarbeiterliste), liegt im Ordner "DiNo1-Druck-Scan" des Shops.
+    try { $StatusOrdner = Join-Path $ShopOrdner "DiNo1-Druck-Scan"; $script:StatusOrdnerStandard = $true } catch { $StatusOrdner = "-" }
 }
 
 # Ordner anlegen, falls sie noch nicht existieren
@@ -4051,1075 +4054,1374 @@ function Zeige-Suche {
     try { $timer.Dispose() } catch {}
 }
 
-# ======================= ZENTRALE MITARBEITERLISTE =======================
-# Die Mitarbeiterliste liegt fuer alle PCs eines Shops in EINER Datei im
-# Shop-Ordner ("DiNo1-Mitarbeiter.txt", je Zeile "Name = Ordnername").
-# Beim ersten Start uebernimmt jeder PC einmalig seine bisherigen Mitarbeiter
-# dorthin (fehlt die Datei, wird sie angelegt). Danach gilt die Datei; ist
-# HiDrive nicht erreichbar, wird die zuletzt gelesene Kopie verwendet.
-$script:MitarbeiterDateiName      = "DiNo1-Mitarbeiter.txt"
-$script:MitarbeiterLokalKopie     = Join-Path $script:DatenOrdner "Mitarbeiter_zentral.txt"
-$script:MitarbeiterAbgleichMerker = Join-Path $script:DatenOrdner ("Mitarbeiter_abgeglichen_" + (Sanitize-Dateiname $env:USERNAME) + ".txt")
-$script:ZentraleListeAktiv        = $false
-$script:KonfigMitarbeiter         = $MitarbeiterOrdner   # Liste aus dem Abschnitt KONFIGURATION
-
-function Get-ZentraleMitarbeiterDatei {
-    if ([string]::IsNullOrWhiteSpace($ShopOrdner)) { return $null }
-    try { return (Join-Path $ShopOrdner $script:MitarbeiterDateiName) } catch { return $null }
-}
-
-function Lese-MitarbeiterDatei($pfad) {
-    if (-not $pfad -or -not (Test-Path $pfad -ErrorAction SilentlyContinue)) { return $null }
-    $liste = [ordered]@{}
-    foreach ($z in [System.IO.File]::ReadAllLines($pfad, [System.Text.Encoding]::UTF8)) {
-        $t = $z.Trim()
-        if (-not $t -or $t.StartsWith("#")) { continue }
-        $i = $t.IndexOf("=")
-        if ($i -lt 1) { continue }
-        $name = $t.Substring(0, $i).Trim()
-        $ordner = $t.Substring($i + 1).Trim()
-        if (-not $name -or -not $ordner) { continue }
-        if (-not $liste.Contains($name)) { $liste[$name] = $ordner }
-    }
-    return $liste
-}
-
-function Schreibe-MitarbeiterDatei($pfad, $liste) {
-    $sb = New-Object System.Text.StringBuilder
-    [void]$sb.AppendLine("# DiNo1 Druck & Scan - Mitarbeiterliste fuer alle PCs dieses Shops")
-    [void]$sb.AppendLine("# Je Zeile:  Name (wie im Auswahlfeld) = Ordnername im Mitarbeiter-Ordner auf HiDrive")
-    [void]$sb.AppendLine("# Aenderungen gelten nach wenigen Minuten auf allen PCs. Zeilen mit # werden ignoriert.")
-    [void]$sb.AppendLine("")
-    foreach ($k in $liste.Keys) { [void]$sb.AppendLine("$k = $($liste[$k])") }
-    # Lokal schreiben, dann kopieren (direktes Schreiben lehnt HiDrive teils ab)
-    $tmp = Join-Path $ScanTempOrdner ("Mitarbeiter_" + [guid]::NewGuid().ToString("N") + ".txt")
-    [System.IO.File]::WriteAllText($tmp, $sb.ToString(), (New-Object System.Text.UTF8Encoding($true)))
-    try {
-        try { Copy-Item -Path $tmp -Destination $pfad -Force -ErrorAction Stop }
-        catch { Remove-Item -Path $pfad -Force -ErrorAction SilentlyContinue; Copy-Item -Path $tmp -Destination $pfad -Force -ErrorAction Stop }
-    } finally {
-        Remove-Item -Path $tmp -Force -ErrorAction SilentlyContinue
-    }
-}
-
-function Ist-BeispielMitarbeiter($ordner) {
-    return ("$ordner" -like "Ordnername_Mitarbeiter_*" -or "$ordner" -eq "1234567 (Max Mustermann)")
-}
-
-function Gleiche-MitarbeiterAb {
-    try {
-        $datei = Get-ZentraleMitarbeiterDatei
-        if (-not $datei) { return }
-        $erreichbar = $false
-        try { $erreichbar = [bool](Test-Path $ShopOrdner -ErrorAction SilentlyContinue) } catch {}
-        $zentral = $null
-        if ($erreichbar) {
-            try { $zentral = Lese-MitarbeiterDatei $datei }
-            catch { Schreibe-Log "HINWEIS: Mitarbeiterliste '$datei' konnte nicht gelesen werden: $($_.Exception.Message)"; return }
-
-            if (-not (Test-Path $script:MitarbeiterAbgleichMerker)) {
-                # Einmalig: Mitarbeiter dieses PCs in die zentrale Liste uebernehmen
-                $neu = [ordered]@{}
-                if ($zentral) { foreach ($k in $zentral.Keys) { $neu[$k] = $zentral[$k] } }
-                $hinzu = New-Object System.Collections.Generic.List[string]
-                foreach ($k in @($script:KonfigMitarbeiter.Keys)) {
-                    $o = "$($script:KonfigMitarbeiter[$k])".Trim()
-                    if (-not $o -or (Ist-BeispielMitarbeiter $o)) { continue }
-                    if (-not $neu.Contains($k)) { $neu[$k] = $o; [void]$hinzu.Add($k) }
-                }
-                if ($hinzu.Count -gt 0) {
-                    Schreibe-MitarbeiterDatei $datei $neu
-                    Schreibe-Log "Zentrale Mitarbeiterliste '$datei': $($hinzu.Count) Mitarbeiter dieses PCs uebernommen ($($hinzu -join ', '))."
-                    $zentral = Lese-MitarbeiterDatei $datei
-                }
-                Set-Content -Path $script:MitarbeiterAbgleichMerker -Value (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') -Encoding ASCII
-            }
-            if ($zentral -and $zentral.Count -gt 0) {
-                try { Copy-Item -Path $datei -Destination $script:MitarbeiterLokalKopie -Force -ErrorAction Stop } catch {}
-            }
-        } elseif (-not $script:ZentraleListeAktiv -and (Test-Path $script:MitarbeiterLokalKopie)) {
-            # HiDrive (noch) nicht erreichbar: zuletzt bekannte Liste verwenden
-            try { $zentral = Lese-MitarbeiterDatei $script:MitarbeiterLokalKopie } catch {}
-        }
-        if ($null -eq $zentral -or $zentral.Count -eq 0) { return }
-
-        $altText = (@($script:MitarbeiterOrdner.Keys) | ForEach-Object { "$_=$($script:MitarbeiterOrdner[$_])" }) -join "|"
-        $neuText = (@($zentral.Keys) | ForEach-Object { "$_=$($zentral[$_])" }) -join "|"
-        $script:ZentraleListeAktiv = $true
-        if ($altText -cne $neuText) {
-            $script:MitarbeiterOrdner = $zentral
-            Schreibe-Log "Mitarbeiterliste aus '$datei' verwendet: $($zentral.Count) Mitarbeiter."
-        }
-    } catch {
-        Schreibe-Log "HINWEIS: Abgleich der Mitarbeiterliste fehlgeschlagen: $($_.Exception.Message)"
-    }
-}
-
-# "Ordner anpassen": Mitarbeiterliste zusaetzlich zentral im Shop-Ordner speichern.
-# Rueckgabe $true, wenn die zentrale Datei geschrieben wurde.
-function Speichere-ZentraleMitarbeiter($shopOrdnerNeu, $paare) {
-    try {
-        if ([string]::IsNullOrWhiteSpace($shopOrdnerNeu) -or -not (Test-Path $shopOrdnerNeu -ErrorAction SilentlyContinue)) { return $false }
-        $liste = [ordered]@{}
-        foreach ($p in $paare) { $liste[$p.Name] = $p.Ordner }
-        $datei = Join-Path $shopOrdnerNeu $script:MitarbeiterDateiName
-        Schreibe-MitarbeiterDatei $datei $liste
-        try { Copy-Item -Path $datei -Destination $script:MitarbeiterLokalKopie -Force -ErrorAction Stop } catch {}
-        Set-Content -Path $script:MitarbeiterAbgleichMerker -Value (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') -Encoding ASCII
-        $script:MitarbeiterOrdner = $liste
-        $script:ZentraleListeAktiv = $true
-        Schreibe-Log "Zentrale Mitarbeiterliste gespeichert: $datei ($($liste.Count) Mitarbeiter)."
-        return $true
-    } catch {
-        Schreibe-Log "HINWEIS: Zentrale Mitarbeiterliste konnte nicht gespeichert werden: $($_.Exception.Message)"
-        [System.Windows.Forms.MessageBox]::Show("Die Mitarbeiterliste konnte nicht im Shop-Ordner gespeichert werden:`n$($_.Exception.Message)`n`nSie gilt vorerst nur fuer diesen PC.", "Ordner anpassen") | Out-Null
-        return $false
-    }
-}
-
-# ======================= SELBSTHEILUNG (WAECHTER) =======================
-# Der Watcher schreibt jede halbe Minute einen "Herzschlag" (Prozess-Nr. +
-# Uhrzeit). Ein kleiner zweiter Prozess (Waechter.ps1) prueft das jede Minute:
-# Bleibt der Herzschlag laenger als 10 Minuten aus (Watcher haengt) oder ist
-# der Watcher-Prozess verschwunden (Absturz), wird er beendet bzw. neu
-# gestartet. Bei "Watcher beenden" im Tray-Menue bleibt er aus.
-$script:BenutzerKennung = Sanitize-Dateiname $env:USERNAME
-$script:HerzschlagDatei = Join-Path $script:DatenOrdner ("Herzschlag_" + $script:BenutzerKennung + ".txt")
-$script:BeendetDatei    = Join-Path $script:DatenOrdner ("Beendet_" + $script:BenutzerKennung + ".txt")
-$script:WaechterDatei   = Join-Path $script:DatenOrdner "Waechter.ps1"
-$script:WaechterMutexName = "Local\DiNo1DruckScanWaechter"
-
-function Schreibe-Herzschlag {
-    try { [System.IO.File]::WriteAllText($script:HerzschlagDatei, "$PID|$((Get-Date).Ticks)") } catch {}
-}
-
-function Starte-Waechter {
-    try {
-        $inhalt = @'
-# DiNo1 Druck & Scan - Waechter: startet den Watcher neu, wenn er haengt oder abgestuerzt ist.
-# Wird vom Watcher selbst angelegt und gestartet - bitte nicht von Hand aendern.
-$mutex = New-Object System.Threading.Mutex($false, "Local\DiNo1DruckScanWaechter")
-$meins = $false
-try { $meins = $mutex.WaitOne(0) } catch { $meins = $true }
-if (-not $meins) { exit }
-$ordner   = $PSScriptRoot
-$kennung  = ($env:USERNAME -replace '[\\/:*?"<>|]', '_').Trim()
-$herz     = Join-Path $ordner ("Herzschlag_" + $kennung + ".txt")
-$beendet  = Join-Path $ordner ("Beendet_" + $kennung + ".txt")
-$logDatei = "__LOGDATEI__"
-$watcher  = "__WATCHER__"
-$eigenStand = (Get-Item $PSCommandPath).LastWriteTimeUtc
-$neustarts = New-Object System.Collections.Generic.List[datetime]
-function Log($t) { try { Add-Content -Path $logDatei -Value ("{0}  WAECHTER: {1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $t) -Encoding UTF8 } catch {} }
-while ($true) {
-    Start-Sleep -Seconds 60
-    if (Test-Path $beendet) { break }
-    try { if ((Get-Item $PSCommandPath).LastWriteTimeUtc -ne $eigenStand) { $mutex.ReleaseMutex(); Start-Process -FilePath "conhost.exe" -ArgumentList ("--headless powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"" + $PSCommandPath + "`""); exit } } catch {}
-    if (-not (Test-Path $herz)) { continue }
-    $wPid = 0; $zeit = Get-Date
-    try {
-        $teile = ([System.IO.File]::ReadAllText($herz)).Trim() -split '\|'
-        $wPid = [int]$teile[0]; $zeit = New-Object DateTime ([long]$teile[1])
-    } catch { continue }
-    $alter = ((Get-Date) - $zeit).TotalMinutes
-    $lebt = $false
-    if ($wPid -gt 0) { $lebt = [bool](Get-Process -Id $wPid -ErrorAction SilentlyContinue) }
-    if ($lebt -and $alter -lt 10) { continue }
-    if (-not $lebt -and $alter -lt 2) { continue }
-    while ($neustarts.Count -gt 0 -and ((Get-Date) - $neustarts[0]).TotalMinutes -gt 60) { $neustarts.RemoveAt(0) }
-    if ($neustarts.Count -ge 3) { continue }
-    if ($lebt) {
-        Log "Watcher (Prozess $wPid) reagiert seit $([int]$alter) Minuten nicht - wird beendet und neu gestartet."
-        try { Stop-Process -Id $wPid -Force -ErrorAction Stop } catch { Log "Beenden fehlgeschlagen: $($_.Exception.Message)" }
-        Start-Sleep -Seconds 3
-    } else {
-        Log "Watcher laeuft nicht mehr (abgestuerzt?) - wird neu gestartet."
-    }
-    try { [System.IO.File]::WriteAllText($herz, "0|$((Get-Date).Ticks)") } catch {}
-    Start-Process -FilePath "conhost.exe" -ArgumentList ("--headless powershell.exe -ExecutionPolicy Bypass -File `"" + $watcher + "`"")
-    $neustarts.Add((Get-Date))
-}
-'@
-        $inhalt = $inhalt.Replace("__LOGDATEI__", $LogDatei).Replace("__WATCHER__", $PSCommandPath)
-        $alt = if (Test-Path $script:WaechterDatei) { [System.IO.File]::ReadAllText($script:WaechterDatei) } else { "" }
-        if ($alt -ne $inhalt) { [System.IO.File]::WriteAllText($script:WaechterDatei, $inhalt, [System.Text.Encoding]::ASCII) }
-
-        # Laeuft schon ein Waechter (in dieser Anmeldung)?
-        $laeuft = $false
-        try { $m = [System.Threading.Mutex]::OpenExisting($script:WaechterMutexName); $m.Dispose(); $laeuft = $true } catch {}
-        if (-not $laeuft) {
-            Start-Process -FilePath "conhost.exe" -ArgumentList ("--headless powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"" + $script:WaechterDatei + "`"")
-            Schreibe-Log "Waechter gestartet (startet den Watcher bei Haengern/Abstuerzen automatisch neu)."
-        }
-    } catch {
-        Schreibe-Log "HINWEIS: Waechter konnte nicht gestartet werden: $($_.Exception.Message)"
-    }
-}
-
-# ======================= TAGESBERICHT =======================
-# Abends (ab $script:TagesberichtUhrzeit) einmal pro Tag: kurze Meldung am
-# Tray-Symbol, was heute auf diesem PC abgelegt wurde und ob etwas haengen
-# geblieben ist. Klick darauf (oder Tray -> "Tagesbericht") zeigt die Liste.
-# Ausserdem landet der Bericht als Textdatei im Shop-Ordner (Status\Berichte).
-$script:TagesberichtUhrzeit = "18:00"
-$script:TagesberichtMerker  = Join-Path $script:DatenOrdner ("Tagesbericht_" + (Sanitize-Dateiname $env:USERNAME) + ".txt")
-$script:BalloonAktion = $null
-
-function Ermittle-Tagesbericht([DateTime]$tag) {
-    $praefix = $tag.ToString("yyyy-MM-dd")
-    $eintraege = New-Object System.Collections.Generic.List[object]
-    try {
-        if (Test-Path $script:SuchindexDatei) {
-            foreach ($z in [System.IO.File]::ReadAllLines($script:SuchindexDatei, [System.Text.Encoding]::UTF8)) {
-                if (-not $z.StartsWith('{"Zeit":"' + $praefix)) { continue }
-                try { $e = $z | ConvertFrom-Json } catch { continue }
-                if ($e.PSObject.Properties["Alt"] -or $e.PSObject.Properties["Quelle"]) { continue }   # Verschiebung/Zusammenfuegung, keine neue Ablage
-                [void]$eintraege.Add($e)
-            }
-        }
-    } catch {}
-    $nichtUebertragen = @(Get-ChildItem -Path $AusweichOrdner -File -Recurse -ErrorAction SilentlyContinue).Count
-    $uebersprungen = @(Get-ChildItem -Path $UebersprungenOrdner -Filter "*.pdf" -File -ErrorAction SilentlyContinue).Count
-    $fehler = 0
-    try {
-        if (Test-Path $LogDatei) {
-            foreach ($z in [System.IO.File]::ReadAllLines($LogDatei)) { if ($z.StartsWith($praefix) -and $z.Contains("FEHLER")) { $fehler++ } }
-        }
-    } catch {}
-    $jeZiel = @{}
-    foreach ($e in $eintraege) { $k = [string]$e.Ziel; if (-not $jeZiel.ContainsKey($k)) { $jeZiel[$k] = 0 }; $jeZiel[$k]++ }
-    return [PSCustomObject]@{
-        Tag = $tag; Eintraege = $eintraege; JeZiel = $jeZiel
-        NichtUebertragen = $nichtUebertragen; Uebersprungen = $uebersprungen; Fehler = $fehler
-    }
-}
-
-function Tagesbericht-Kurztext($b) {
-    $teile = @()
-    foreach ($k in @("Mitarbeiter", "Shop", "Kasse", "Lokal")) { if ($b.JeZiel.ContainsKey($k)) { $teile += "$k $($b.JeZiel[$k])" } }
-    $text = "Heute abgelegt: $($b.Eintraege.Count) Dokument(e)"
-    if ($teile.Count -gt 0) { $text += " (" + ($teile -join ", ") + ")" }
-    $probleme = @()
-    if ($b.NichtUebertragen -gt 0) { $probleme += "$($b.NichtUebertragen) noch nicht uebertragen" }
-    if ($b.Uebersprungen -gt 0) { $probleme += "$($b.Uebersprungen) uebersprungen" }
-    if ($b.Fehler -gt 0) { $probleme += "$($b.Fehler) Fehler im Log" }
-    if ($probleme.Count -gt 0) { $text += ".`nAchtung: " + ($probleme -join ", ") + "." } else { $text += ". Alles erledigt." }
-    return $text
-}
-
-function Speichere-TagesberichtImShop($b) {
-    try {
-        if ([string]::IsNullOrWhiteSpace($StatusOrdner) -or $StatusOrdner.Trim() -eq "-" -or -not (Test-Path $StatusOrdner -ErrorAction SilentlyContinue)) { return }
-        $ordner = Join-Path $StatusOrdner "Berichte"
-        if (-not (Test-Path $ordner)) { New-Item -ItemType Directory -Path $ordner -Force | Out-Null }
-        $zeilen = New-Object System.Collections.Generic.List[string]
-        [void]$zeilen.Add("DiNo1 Druck & Scan - Tagesbericht $($b.Tag.ToString('dd.MM.yyyy')) - $StandortName - PC $env:COMPUTERNAME ($env:USERNAME)")
-        [void]$zeilen.Add("")
-        [void]$zeilen.Add((Tagesbericht-Kurztext $b))
-        [void]$zeilen.Add("")
-        foreach ($e in $b.Eintraege) {
-            $ablage = if ($e.Ziel -eq "Mitarbeiter") { "Mitarbeiter: $($e.Mitarbeiter)" } else { "$($e.Ziel)" }
-            [void]$zeilen.Add(("{0}  {1,-28}  {2}  ->  {3}" -f ([string]$e.Zeit).Substring(11), $ablage, $e.Bezeichnung, $e.Pfad))
-        }
-        $tmp = Join-Path $ScanTempOrdner ("Bericht_" + [guid]::NewGuid().ToString("N") + ".txt")
-        [System.IO.File]::WriteAllLines($tmp, $zeilen, (New-Object System.Text.UTF8Encoding($true)))
-        $ziel = Join-Path $ordner ($b.Tag.ToString("yyyy-MM-dd") + "_" + (Get-PcKennung) + ".txt")
-        try { Copy-Item -Path $tmp -Destination $ziel -Force -ErrorAction Stop }
-        catch { Remove-Item -Path $ziel -Force -ErrorAction SilentlyContinue; Copy-Item -Path $tmp -Destination $ziel -Force -ErrorAction SilentlyContinue }
-        Remove-Item -Path $tmp -Force -ErrorAction SilentlyContinue
-    } catch {}
-}
-
-# Wird jede Minute aufgerufen: zur eingestellten Uhrzeit einmal pro Tag melden
-function Pruefe-Tagesbericht {
-    try {
-        $jetzt = Get-Date
-        $grenze = [DateTime]::ParseExact($jetzt.ToString("yyyy-MM-dd") + " " + $script:TagesberichtUhrzeit, "yyyy-MM-dd HH:mm", $null)
-        if ($jetzt -lt $grenze) { return }
-        $heute = $jetzt.ToString("yyyy-MM-dd")
-        $zuletzt = ""
-        if (Test-Path $script:TagesberichtMerker) { $zuletzt = ([System.IO.File]::ReadAllText($script:TagesberichtMerker)).Trim() }
-        if ($zuletzt -eq $heute) { return }
-        [System.IO.File]::WriteAllText($script:TagesberichtMerker, $heute)
-        $b = Ermittle-Tagesbericht $jetzt.Date
-        $problem = ($b.NichtUebertragen -gt 0 -or $b.Uebersprungen -gt 0 -or $b.Fehler -gt 0)
-        if ($b.Eintraege.Count -eq 0 -and -not $problem) { return }   # heute nichts los - keine Meldung
-        Speichere-TagesberichtImShop $b
-        $script:BalloonAktion = { Zeige-Tagesbericht }
-        $symbol = if ($problem) { [System.Windows.Forms.ToolTipIcon]::Warning } else { [System.Windows.Forms.ToolTipIcon]::Info }
-        $trayIcon.ShowBalloonTip(15000, "DiNo1 Tagesbericht", ((Tagesbericht-Kurztext $b) + "`nKlicken fuer Details."), $symbol)
-    } catch {
-        Schreibe-Log "HINWEIS: Tagesbericht fehlgeschlagen: $($_.Exception.Message)"
-    }
-}
-
-function Zeige-Tagesbericht {
-    $b = Ermittle-Tagesbericht (Get-Date).Date
-    $form = New-Object System.Windows.Forms.Form
-    $form.Add_Load({ Setze-Design $this })
-    $form.Text = "Tagesbericht $((Get-Date).ToString('dd.MM.yyyy')) - DiNo1 Druck & Scan"
-    $form.Size = New-Object System.Drawing.Size(860, 480)
-    $form.StartPosition = "CenterScreen"
-    $form.MinimumSize = New-Object System.Drawing.Size(600, 300)
-
-    $kopf = New-Object System.Windows.Forms.Label
-    $kopf.Dock = "Top"
-    $kopf.Height = 64
-    $kopf.Padding = New-Object System.Windows.Forms.Padding(12, 10, 12, 4)
-    $kopf.Font = New-Object System.Drawing.Font("Segoe UI", 10)
-    $kopf.UseMnemonic = $false
-    $kopf.Text = Tagesbericht-Kurztext $b
-    $form.Controls.Add($kopf)
-
-    $grid = New-Object System.Windows.Forms.DataGridView
-    $grid.Dock = "Fill"
-    $grid.ReadOnly = $true
-    $grid.AllowUserToAddRows = $false
-    $grid.RowHeadersVisible = $false
-    $grid.SelectionMode = "FullRowSelect"
-    $grid.AutoSizeColumnsMode = "Fill"
-    foreach ($s in @(@("Uhrzeit", 50), @("Ablage", 120), @("Bezeichnung", 160), @("Datei", 300))) {
-        $i = $grid.Columns.Add($s[0], $s[0]); $grid.Columns[$i].FillWeight = $s[1]
-    }
-    foreach ($e in $b.Eintraege) {
-        $ablage = if ($e.Ziel -eq "Mitarbeiter") { "Mitarbeiter: $($e.Mitarbeiter)" } else { "$($e.Ziel)" }
-        [void]$grid.Rows.Add(([string]$e.Zeit).Substring(11, 5), $ablage, [string]$e.Bezeichnung, [string]$e.Pfad)
-    }
-    $grid.Add_CellDoubleClick({
-        param($s, $e)
-        if ($e.RowIndex -lt 0) { return }
-        $p = [string]$grid.Rows[$e.RowIndex].Cells["Datei"].Value
-        if ($p -and (Test-Path $p)) { Start-Process -FilePath $p }
-    })
-    $form.Controls.Add($grid)
-    $grid.BringToFront()
-    [void]$form.ShowDialog()
-}
-
-# ======================= PDF-SEITEN ALS BILD (Vorschau, Zusammenfuegen, Altbestand) =======================
-# Rendert Seiten einer PDF ueber die PDF-Anzeige von Windows (Windows.Data.Pdf)
-# als PNG-Dateien in den Scan-Temp-Ordner. Rueckgabe: Liste von Objekten
-# (Png = Dateipfad, Dpi = Aufloesung) - die PNGs muss der Aufrufer loeschen.
-function Rendere-PdfSeiten($pdfPfad, [int]$breitePx = 1654, [int]$maxSeiten = 0) {
-    $liste = New-Object System.Collections.Generic.List[object]
-    if (-not (Initialisiere-WinRT)) { throw "Die PDF-Anzeige von Windows ist auf diesem PC nicht verfuegbar." }
-    $kennung = [guid]::NewGuid().ToString("N")
-    $kopie = Join-Path $ScanTempOrdner ("Seiten_" + $kennung + ".pdf")
-    try {
-        Copy-Item -Path $pdfPfad -Destination $kopie -Force -ErrorAction Stop
-        $datei = Warte-WinRT ([Windows.Storage.StorageFile]::GetFileFromPathAsync($kopie)) ([Windows.Storage.StorageFile])
-        $dok = Warte-WinRT ([Windows.Data.Pdf.PdfDocument]::LoadFromFileAsync($datei)) ([Windows.Data.Pdf.PdfDocument])
-        $anzahl = [int]$dok.PageCount
-        if ($maxSeiten -gt 0 -and $anzahl -gt $maxSeiten) { $anzahl = $maxSeiten }
-        for ($i = 0; $i -lt $anzahl; $i++) {
-            $seite = $null; $mem = $null; $netz = $null
-            try {
-                $seite = $dok.GetPage([uint32]$i)
-                $mem = New-Object Windows.Storage.Streams.InMemoryRandomAccessStream
-                $opt = New-Object Windows.Data.Pdf.PdfPageRenderOptions
-                $opt.DestinationWidth = [uint32]$breitePx
-                Warte-WinRTAktion ($seite.RenderToStreamAsync($mem, $opt))
-                $mem.Seek(0)
-                $netz = [System.IO.WindowsRuntimeStreamExtensions]::AsStreamForRead($mem)
-                $png = Join-Path $ScanTempOrdner ("Seite_" + $kennung + "_" + $i + ".png")
-                $fs = [System.IO.File]::Create($png)
-                try { $netz.CopyTo($fs) } finally { $fs.Close() }
-                $zoll = 8.27
-                try { $b = [double]$seite.Size.Width; if ($b -gt 10) { $zoll = $b / 96.0 } } catch {}
-                [void]$liste.Add([PSCustomObject]@{ Png = $png; Dpi = ($breitePx / $zoll) })
-            } finally {
-                if ($netz) { try { $netz.Dispose() } catch {} }
-                if ($mem) { try { $mem.Dispose() } catch {} }
-                if ($seite) { try { $seite.Dispose() } catch {} }
-            }
-        }
-    } finally {
-        Remove-Item -Path $kopie -Force -ErrorAction SilentlyContinue
-    }
-    return ,$liste
-}
-
-function Entferne-SeitenBilder($seiten) {
-    foreach ($s in @($seiten)) { if ($s -and $s.Png) { Remove-Item -Path $s.Png -Force -ErrorAction SilentlyContinue } }
-}
-
-# Kleines Vorschaubild der ersten Seite (fuer die Suche). Rueckgabe Bitmap oder $null.
-$script:VorschauCache = @{}
-function Hole-Vorschaubild($pdfPfad) {
-    if ($script:VorschauCache.ContainsKey($pdfPfad)) { return $script:VorschauCache[$pdfPfad] }
-    $bild = $null
-    $seiten = $null
-    try {
-        $seiten = Rendere-PdfSeiten $pdfPfad 700 1
-        if ($seiten.Count -gt 0) {
-            $bytes = [System.IO.File]::ReadAllBytes($seiten[0].Png)
-            $ms = New-Object System.IO.MemoryStream(,$bytes)
-            $tmp = [System.Drawing.Image]::FromStream($ms)
-            $bild = New-Object System.Drawing.Bitmap $tmp
-            $tmp.Dispose(); $ms.Dispose()
-        }
-    } catch {
-        $bild = $null
-    } finally {
-        if ($seiten) { Entferne-SeitenBilder $seiten }
-    }
-    if ($script:VorschauCache.Count -gt 40) {
-        $script:VorschauCache.Clear()   # Bilder nicht selbst freigeben - eins koennte gerade angezeigt werden
-    }
-    $script:VorschauCache[$pdfPfad] = $bild
-    return $bild
-}
-
-# Erzeugt eine (durchsuchbare) PDF aus Seitenbildern an einem beliebigen Ort.
-# $seiten: Objekte mit Png + Dpi. Rueckgabe: erkannter Gesamttext.
-function Schreibe-PdfAusSeiten($seiten, $zielPfad, [string]$fortschrittText = "PDF wird erstellt ...") {
-    $jpegs  = New-Object System.Collections.Generic.List[byte[]]
-    $sw     = New-Object System.Collections.Generic.List[bool]
-    $breite = New-Object System.Collections.Generic.List[int]
-    $hoehe  = New-Object System.Collections.Generic.List[int]
-    $dx     = New-Object System.Collections.Generic.List[double]
-    $dy     = New-Object System.Collections.Generic.List[double]
-    $texte  = New-Object System.Collections.Generic.List[string]
-    $gesamt = New-Object System.Text.StringBuilder
-    $mitOcr = Initialisiere-Ocr
-    $nr = 0
-    $anzahl = @($seiten).Count
-    foreach ($s in $seiten) {
-        $nr++
-        Zeige-Fortschritt $fortschrittText "Seite $nr von $anzahl$(if ($mitOcr) { ' (mit Texterkennung)' })"
-        $seite = [PpeBild]::LadeAlsJpeg($s.Png, [long]$PdfBildQualitaet)
-        $x = [double]$s.Dpi
-        if ($x -lt 50 -or $x -gt 2400) { $x = $seite.Breite / $script:A4_BREITE_ZOLL }
-        [void]$jpegs.Add($seite.Jpeg); [void]$sw.Add([bool]$seite.Schwarzweiss)
-        [void]$breite.Add($seite.Breite); [void]$hoehe.Add($seite.Hoehe)
-        [void]$dx.Add($x); [void]$dy.Add($x)
-        $ebene = $null
-        if ($mitOcr) {
-            $erkannt = Erkenne-Text $s.Png
-            if ($erkannt -and $erkannt.Woerter.Count -gt 0) {
-                try { $ebene = [PpePdf]::TextEbene([string[]]$erkannt.Woerter, [double[]]$erkannt.X, [double[]]$erkannt.Y, [double[]]$erkannt.W, [double[]]$erkannt.H, $x, $x, [int]$seite.Hoehe) } catch {}
-                [void]$gesamt.AppendLine($erkannt.Text)
-            }
-        }
-        [void]$texte.Add($ebene)
-    }
-    $tempPdf = Join-Path $ScanTempOrdner ("Zusammen_" + [guid]::NewGuid().ToString("N") + ".pdf")
-    [PpePdf]::Schreibe($tempPdf, $jpegs.ToArray(), $breite.ToArray(), $hoehe.ToArray(), $dx.ToArray(), $dy.ToArray(), $sw.ToArray(), $texte.ToArray())
-    try { Move-Item -Path $tempPdf -Destination $zielPfad -ErrorAction Stop }
-    catch { Copy-Item -Path $tempPdf -Destination $zielPfad -Force -ErrorAction Stop; Remove-Item -Path $tempPdf -Force -ErrorAction SilentlyContinue }
-    return $gesamt.ToString()
-}
-
-# ======================= SUCHINDEX: VERSCHIEBEN / UMBENENNEN =======================
-# Holt den letzten Suchindex-Eintrag zu einer Datei (eigener PC + Shop-Kopien)
-function Hole-IndexEintrag($pfad) {
-    $treffer = $null
-    $dateien = New-Object System.Collections.Generic.List[string]
-    if (Test-Path $script:SuchindexDatei) { [void]$dateien.Add($script:SuchindexDatei) }
-    $alt = Join-Path $script:DatenOrdner "Suchindex_Altbestand.jsonl"
-    if (Test-Path $alt) { [void]$dateien.Add($alt) }
-    try {
-        if ($StatusOrdner -and $StatusOrdner -ne "-") {
-            foreach ($f in @(Get-ChildItem -Path (Join-Path $StatusOrdner "Suchindex") -Filter "*.jsonl" -File -ErrorAction SilentlyContinue)) { [void]$dateien.Add($f.FullName) }
-        }
-    } catch {}
-    $suche = ($pfad | ConvertTo-Json -Compress)   # so steht der Pfad im JSON
-    foreach ($d in $dateien) {
-        try {
-            foreach ($z in [System.IO.File]::ReadAllLines($d, [System.Text.Encoding]::UTF8)) {
-                if ($z.IndexOf($suche, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) { continue }
-                try { $e = $z | ConvertFrom-Json } catch { continue }
-                if ([string]$e.Pfad -ieq $pfad) { $treffer = $e }
-            }
-        } catch {}
-    }
-    return $treffer
-}
-
-# Vermerkt im Suchindex, dass eine Datei verschoben/umbenannt wurde
-function Merke-Verschiebung($altPfad, $neuPfad, $ziel, $mitarbeiter, $bezeichnung) {
-    try {
-        $alt = Hole-IndexEintrag $altPfad
-        $eintrag = [ordered]@{
-            Zeit        = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
-            Datum       = $(if ($alt -and $alt.Datum) { [string]$alt.Datum } else { (Get-Item $neuPfad -ErrorAction SilentlyContinue).LastWriteTime.ToString("yyyy-MM-dd") })
-            Ziel        = $ziel
-            Mitarbeiter = "$mitarbeiter"
-            Bezeichnung = $bezeichnung
-            Pfad        = $neuPfad
-            PC          = $env:COMPUTERNAME
-            Text        = $(if ($alt) { [string]$alt.Text } else { "" })
-            Alt         = $altPfad
-        }
-        $zeile = ($eintrag | ConvertTo-Json -Compress -Depth 2)
-        [System.IO.File]::AppendAllText($script:SuchindexDatei, $zeile + "`r`n", (New-Object System.Text.UTF8Encoding($false)))
-        Kopiere-SuchindexInShop
-    } catch {
-        Schreibe-Log "HINWEIS: Verschiebung konnte nicht im Suchverzeichnis vermerkt werden: $($_.Exception.Message)"
-    }
-}
-
-# Zielordner fuer "Verschieben nach": Mitarbeiter (Name), "Shop" oder "Kasse"
-function Ermittle-VerschiebeZiel($art, $mitarbeiter, $datum) {
-    switch ($art) {
-        "Mitarbeiter" {
-            $o = [string]$MitarbeiterOrdner[$mitarbeiter]
-            if (-not $o) { throw "Fuer '$mitarbeiter' ist kein Ordner hinterlegt." }
-            return (Join-Path $ZielBasis $o)
-        }
-        "Shop"  { return $ShopOrdner }
-        "Kasse" {
-            $d = Get-Date
-            try { $d = [DateTime]::ParseExact([string]$datum, "yyyy-MM-dd", $null) } catch {}
-            return (Ermittle-KassenMonatsordner $KassenOrdner $d)
-        }
-    }
-    throw "Unbekanntes Ziel '$art'"
-}
-
-# Verschiebt/benennt eine abgelegte Datei um. Rueckgabe: neuer Pfad.
-function Verschiebe-Dokument($pfad, $zielOrdner, $neuerName, $ziel, $mitarbeiter) {
-    if (-not (Test-Path $pfad)) { throw "Die Datei ist nicht (mehr) erreichbar:`n$pfad" }
-    if (-not (Test-Path $zielOrdner -ErrorAction SilentlyContinue)) { New-Item -ItemType Directory -Path $zielOrdner -Force -ErrorAction Stop | Out-Null }
-    $basis = Sanitize-Dateiname ([System.IO.Path]::GetFileNameWithoutExtension($neuerName))
-    if (-not $basis) { throw "Der Dateiname darf nicht leer sein." }
-    $neu = Join-Path $zielOrdner "$basis.pdf"
-    if ($neu -ine $pfad) {
-        if (Test-Path $neu) { $neu = Get-EindeutigerZielpfad $zielOrdner $basis "pdf" }
-        Move-Item -Path $pfad -Destination $neu -ErrorAction Stop
-    }
-    $bez = $basis -replace '^\d{4}-\d{2}-\d{2}_', ''
-    Merke-Verschiebung $pfad $neu $ziel $mitarbeiter $bez
-    Schreibe-Log "Dokument verschoben/umbenannt: $pfad -> $neu"
-    return $neu
-}
-
-# Kleines Eingabefenster (Text). Rueckgabe: Text oder $null bei Abbruch.
-function Frage-Text($titel, $frage, $vorgabe) {
-    $f = New-Object System.Windows.Forms.Form
-    $f.Add_Load({ Setze-Design $this })
-    $f.Text = $titel
-    $f.FormBorderStyle = "FixedDialog"
-    $f.MaximizeBox = $false; $f.MinimizeBox = $false
-    $f.StartPosition = "CenterParent"
-    $f.ClientSize = New-Object System.Drawing.Size(460, 120)
-    $l = New-Object System.Windows.Forms.Label
-    $l.Text = $frage; $l.UseMnemonic = $false
-    $l.Location = New-Object System.Drawing.Point(12, 12); $l.Size = New-Object System.Drawing.Size(436, 20)
-    $f.Controls.Add($l)
-    $t = New-Object System.Windows.Forms.TextBox
-    $t.Location = New-Object System.Drawing.Point(12, 36); $t.Width = 436
-    $t.Text = $vorgabe
-    $f.Controls.Add($t)
-    $ok = New-Object System.Windows.Forms.Button
-    $ok.Text = "OK"; $ok.DialogResult = [System.Windows.Forms.DialogResult]::OK
-    $ok.Location = New-Object System.Drawing.Point(252, 76); $ok.Size = New-Object System.Drawing.Size(95, 30)
-    $f.Controls.Add($ok); $f.AcceptButton = $ok
-    $ab = New-Object System.Windows.Forms.Button
-    $ab.Text = "Abbrechen"; $ab.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
-    $ab.Location = New-Object System.Drawing.Point(353, 76); $ab.Size = New-Object System.Drawing.Size(95, 30)
-    $f.Controls.Add($ab); $f.CancelButton = $ab
-    $f.Add_Shown({ $t.SelectAll(); $t.Focus() })
-    $r = $f.ShowDialog()
-    $wert = $t.Text
-    $f.Dispose()
-    if ($r -ne [System.Windows.Forms.DialogResult]::OK) { return $null }
-    return $wert
-}
-
-# ======================= ALTBESTAND DURCHSUCHBAR MACHEN =======================
-# Ein eigener Hintergrund-Prozess (niedrige Prioritaet) liest vorhandene PDFs
-# im Shop-Ordner und in den Ordnern der hinterlegten Mitarbeiter, erkennt den
-# Text der ersten Seiten und traegt sie ins Suchverzeichnis ein. So findet die
-# Suche auch Dokumente, die vor Version 23 oder ohne Watcher abgelegt wurden.
-# Technisch: Kopie dieser Datei als "DiNo1-Indexierung.ps1" - erkennt sich am
-# Dateinamen und arbeitet dann nur die Liste ab (kein Tray-Symbol).
-$script:AltbestandIndex   = Join-Path $script:DatenOrdner "Suchindex_Altbestand.jsonl"
-$script:IndexierSkript    = Join-Path $script:DatenOrdner "DiNo1-Indexierung.ps1"
-$script:IndexMutexName    = "Local\DiNo1DruckScanIndexierung"
-$script:IndexSeiten       = 3          # so viele Seiten je PDF werden gelesen
-$script:IndexLetzterStart = [DateTime]::MinValue
-
-function Starte-AltbestandIndexierung {
-    try {
-        $laeuft = $false
-        try { $m = [System.Threading.Mutex]::OpenExisting($script:IndexMutexName); $m.Dispose(); $laeuft = $true } catch {}
-        if ($laeuft) { return }
-        if (-not $OcrAktiv) { return }
-        Copy-Item -Path $script:EigenerPfad -Destination $script:IndexierSkript -Force -ErrorAction Stop
-        Start-Process -FilePath "conhost.exe" -ArgumentList ("--headless powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"" + $script:IndexierSkript + "`"")
-        $script:IndexLetzterStart = Get-Date
-    } catch {
-        Schreibe-Log "HINWEIS: Altbestand-Indexierung konnte nicht gestartet werden: $($_.Exception.Message)"
-    }
-}
-
-function Kopiere-AltbestandInShop {
-    try {
-        if (-not (Test-Path $script:AltbestandIndex)) { return }
-        if ([string]::IsNullOrWhiteSpace($StatusOrdner) -or $StatusOrdner.Trim() -eq "-" -or -not (Test-Path $StatusOrdner -ErrorAction SilentlyContinue)) { return }
-        $ordner = Join-Path $StatusOrdner "Suchindex"
-        if (-not (Test-Path $ordner)) { New-Item -ItemType Directory -Path $ordner -Force | Out-Null }
-        $ziel = Join-Path $ordner ("Altbestand_" + (Get-PcKennung) + ".jsonl")
-        try { Copy-Item -Path $script:AltbestandIndex -Destination $ziel -Force -ErrorAction Stop }
-        catch { Remove-Item -Path $ziel -Force -ErrorAction SilentlyContinue; Copy-Item -Path $script:AltbestandIndex -Destination $ziel -Force -ErrorAction Stop }
-    } catch {}
-}
-
-# Alle Pfade, die schon in irgendeinem Suchverzeichnis stehen
-function Lese-BekanntePfade {
-    $set = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::OrdinalIgnoreCase)
-    $dateien = New-Object System.Collections.Generic.List[string]
-    foreach ($d in @($script:SuchindexDatei, $script:AltbestandIndex)) { if (Test-Path $d) { [void]$dateien.Add($d) } }
-    try {
-        if ($StatusOrdner -and $StatusOrdner -ne "-") {
-            foreach ($f in @(Get-ChildItem -Path (Join-Path $StatusOrdner "Suchindex") -Filter "*.jsonl" -File -ErrorAction SilentlyContinue)) { [void]$dateien.Add($f.FullName) }
-        }
-    } catch {}
-    foreach ($d in $dateien) {
-        try {
-            foreach ($z in [System.IO.File]::ReadAllLines($d, [System.Text.Encoding]::UTF8)) {
-                $m = [regex]::Match($z, '"Pfad":"((?:[^"\\]|\\.)*)"')
-                if ($m.Success) { try { [void]$set.Add(('"' + $m.Groups[1].Value + '"' | ConvertFrom-Json)) } catch {} }
-            }
-        } catch {}
-    }
-    return ,$set
-}
-
-# Laeuft im Indexier-Prozess
-function Fuehre-AltbestandIndexierungAus {
-    try { (Get-Process -Id $PID).PriorityClass = [System.Diagnostics.ProcessPriorityClass]::Idle } catch {}
-    Schreibe-Log "Indexierung Altbestand: gestartet."
-    $statusPfad = if ($StatusOrdner -and $StatusOrdner -ne "-") { $StatusOrdner.TrimEnd('\') } else { "" }
-    # Mitarbeiter-Ordner -> Name (fuer die Anzeige "Mitarbeiter: ...")
-    $ordnerZuName = @{}
-    foreach ($k in @($MitarbeiterOrdner.Keys)) { $ordnerZuName[(Join-Path $ZielBasis ([string]$MitarbeiterOrdner[$k])).TrimEnd('\').ToLowerInvariant()] = $k }
-
-    $bekannt = Lese-BekanntePfade
-    $neu = 0; $fehler = 0; $seitLetzterKopie = 0
-    foreach ($wurzel in (Get-SuchOrdner)) {
-        if (-not (Test-Path $wurzel -ErrorAction SilentlyContinue)) { continue }
-        $mitarbeiter = ""
-        $ziel = "Shop"
-        if ($ordnerZuName.ContainsKey($wurzel.ToLowerInvariant())) { $ziel = "Mitarbeiter"; $mitarbeiter = $ordnerZuName[$wurzel.ToLowerInvariant()] }
-        $stapel = New-Object System.Collections.Generic.Stack[string]
-        $stapel.Push($wurzel)
-        while ($stapel.Count -gt 0) {
-            $dir = $stapel.Pop()
-            try {
-                foreach ($u in [System.IO.Directory]::GetDirectories($dir)) {
-                    if ($statusPfad -and $u.Equals($statusPfad, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
-                    $stapel.Push($u)
-                }
-            } catch {}
-            $dateien = @()
-            try { $dateien = [System.IO.Directory]::GetFiles($dir, "*.pdf") } catch {}
-            foreach ($f in $dateien) {
-                if ($bekannt.Contains($f)) { continue }
-                [void]$bekannt.Add($f)
-                $text = ""
-                $seiten = $null
-                try {
-                    $seiten = Rendere-PdfSeiten $f 1240 $script:IndexSeiten
-                    $sb = New-Object System.Text.StringBuilder
-                    foreach ($s in $seiten) {
-                        $erkannt = Erkenne-Text $s.Png
-                        if ($erkannt) { [void]$sb.AppendLine($erkannt.Text) }
-                    }
-                    $text = $sb.ToString()
-                } catch {
-                    $fehler++
-                } finally {
-                    if ($seiten) { Entferne-SeitenBilder $seiten }
-                }
-                if ($text.Length -gt 30000) { $text = $text.Substring(0, 30000) }
-                $datum = ""
-                try { $datum = [System.IO.File]::GetLastWriteTime($f).ToString("yyyy-MM-dd") } catch {}
-                $name = [System.IO.Path]::GetFileNameWithoutExtension($f)
-                if ($name -match '^(\d{4}-\d{2}-\d{2})_(.*)$') { $datum = $matches[1]; $name = $matches[2] }
-                $eintrag = [ordered]@{
-                    Zeit = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'); Datum = $datum; Ziel = $ziel
-                    Mitarbeiter = $mitarbeiter; Bezeichnung = $name; Pfad = $f; PC = $env:COMPUTERNAME
-                    Text = $text; Quelle = "Altbestand"
-                }
-                try { [System.IO.File]::AppendAllText($script:AltbestandIndex, (($eintrag | ConvertTo-Json -Compress -Depth 2) + "`r`n"), (New-Object System.Text.UTF8Encoding($false))) } catch {}
-                $neu++; $seitLetzterKopie++
-                if ($seitLetzterKopie -ge 20) {
-                    Kopiere-AltbestandInShop; $seitLetzterKopie = 0
-                    # Was andere PCs inzwischen erledigt haben, nicht doppelt machen
-                    foreach ($p in (Lese-BekanntePfade)) { [void]$bekannt.Add($p) }
-                }
-                Start-Sleep -Milliseconds 200
-            }
-        }
-    }
-    Kopiere-AltbestandInShop
-    Schreibe-Log "Indexierung Altbestand: fertig - $neu Dokument(e) neu aufgenommen$(if ($fehler) { ", $fehler nicht lesbar" })."
-}
-
-# ======================= PDFs ZUSAMMENFUEGEN =======================
-# 1. Von Hand: Fenster "PDFs zusammenfuegen" - Dateien hineinziehen (Drag &
-#    Drop aus dem Explorer oder aus der Suche), Reihenfolge per Ziehen
-#    aendern, "Zusammenfuegen". Die Seiten werden neu aufgebaut (als Bild mit
-#    Texterkennung, also wieder durchsuchbar).
-# 2. Automatisch: Werden Dokumente wie "Thomas Meier 1", "Thomas Meier 2"
-#    (auch "Thomas Meier zwei", "... Teil 3") am selben Tag in denselben Ordner
-#    abgelegt, entsteht ca. 2 Minuten nach dem letzten Teil daraus
-#    "Thomas Meier.pdf"; die Einzelteile wandern in den Unterordner
-#    "Einzelteile". Voraussetzung: Teil 1 ist dabei.
-$script:AutoZusammenfuegen = $true
-$script:EinzelteileOrdnerName = "Einzelteile"
-$script:ZusammenKandidaten = @{}
-$script:ZahlWoerter = @{ "eins" = 1; "ein" = 1; "zwei" = 2; "drei" = 3; "vier" = 4; "fuenf" = 5; "sechs" = 6; "sieben" = 7; "acht" = 8; "neun" = 9; "zehn" = 10 }
-$script:ZahlWoerter[("f" + [char]0x00FC + "nf")] = 5
-
-# Zerlegt "2026-11-12_Thomas Meier 2" in Schluessel (Datum+Name) und Nummer - oder $null
-function Zerlege-TeilName($basisname) {
-    $m = [regex]::Match($basisname, '^(?<datum>\d{4}-\d{2}-\d{2}_)?(?<name>.+?)[\s_\-]+(?:teil[\s_\-]*)?(?<nr>\d{1,2}|[a-z' + [char]0x00FC + ']+)$', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
-    if (-not $m.Success) { return $null }
-    $nrText = $m.Groups["nr"].Value.ToLowerInvariant()
-    $nr = 0
-    if ($nrText -match '^\d+$') { $nr = [int]$nrText } elseif ($script:ZahlWoerter.ContainsKey($nrText)) { $nr = $script:ZahlWoerter[$nrText] } else { return $null }
-    if ($nr -lt 1) { return $null }
-    $name = $m.Groups["name"].Value.Trim()
-    if (-not $name) { return $null }
-    return [PSCustomObject]@{ Datum = $m.Groups["datum"].Value; Name = $name; Nr = $nr; Schluessel = ($m.Groups["datum"].Value + $name).ToLowerInvariant() }
-}
-
-# Wo liegt eine Datei? -> Ziel (Mitarbeiter/Shop/Kasse/Lokal) + Mitarbeitername
-function Ermittle-AblageFuerPfad($pfad) {
-    $p = "$pfad".ToLowerInvariant()
-    foreach ($k in @($MitarbeiterOrdner.Keys)) {
-        $o = (Join-Path $ZielBasis ([string]$MitarbeiterOrdner[$k])).TrimEnd('\').ToLowerInvariant() + "\"
-        if ($p.StartsWith($o)) { return @{ Ziel = "Mitarbeiter"; Mitarbeiter = $k } }
-    }
-    if ($ShopOrdner -and $p.StartsWith($ShopOrdner.TrimEnd('\').ToLowerInvariant() + "\")) { return @{ Ziel = "Shop"; Mitarbeiter = "" } }
-    if ($KassenOrdner -and $p.StartsWith((Split-Path $KassenOrdner -Parent).TrimEnd('\').ToLowerInvariant() + "\")) { return @{ Ziel = "Kasse"; Mitarbeiter = "" } }
-    return @{ Ziel = "Lokal"; Mitarbeiter = "" }
-}
-
-function Merke-NeuesDokument($pfad, $text, $datum, $bezeichnung) {
-    try {
-        $abl = Ermittle-AblageFuerPfad $pfad
-        $t = "$text"; if ($t.Length -gt 30000) { $t = $t.Substring(0, 30000) }
-        $eintrag = [ordered]@{
-            Zeit = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'); Datum = $datum; Ziel = $abl.Ziel
-            Mitarbeiter = $abl.Mitarbeiter; Bezeichnung = $bezeichnung; Pfad = $pfad; PC = $env:COMPUTERNAME
-            Text = $t; Quelle = "Zusammengefuegt"
-        }
-        [System.IO.File]::AppendAllText($script:SuchindexDatei, (($eintrag | ConvertTo-Json -Compress -Depth 2) + "`r`n"), (New-Object System.Text.UTF8Encoding($false)))
-        Kopiere-SuchindexInShop
-    } catch {}
-}
-
-# Fuegt PDFs zusammen. Rueckgabe: Pfad der neuen Datei.
-function Fuege-PdfsZusammen($dateien, $zielPfad, [bool]$einzelteileWegraeumen) {
-    $alleSeiten = New-Object System.Collections.Generic.List[object]
-    try {
-        $nr = 0
-        foreach ($d in $dateien) {
-            $nr++
-            Zeige-Fortschritt "PDFs werden zusammengefuegt ..." "Lese Datei $nr von $(@($dateien).Count): $([System.IO.Path]::GetFileName($d))"
-            foreach ($s in (Rendere-PdfSeiten $d 1654 0)) { [void]$alleSeiten.Add($s) }
-        }
-        if ($alleSeiten.Count -eq 0) { throw "Die Dateien enthalten keine Seiten." }
-        $temp = Join-Path $ScanTempOrdner ("Zusammen_" + [guid]::NewGuid().ToString("N") + ".pdf")
-        $text = Schreibe-PdfAusSeiten $alleSeiten $temp "PDFs werden zusammengefuegt ..."
-        # Einzelteile wegraeumen (vorher, damit der Zielname frei wird, falls er einem Teil entspricht)
-        if ($einzelteileWegraeumen) {
-            foreach ($d in $dateien) {
-                if (-not (Test-Path $d)) { continue }
-                $ordner = Split-Path $d -Parent
-                if ((Split-Path $ordner -Leaf) -ieq $script:EinzelteileOrdnerName) { continue }   # liegt schon dort
-                $teileOrdner = Join-Path $ordner $script:EinzelteileOrdnerName
-                if (-not (Test-Path $teileOrdner)) { New-Item -ItemType Directory -Path $teileOrdner -Force | Out-Null }
-                $neu = Get-EindeutigerZielpfad $teileOrdner ([System.IO.Path]::GetFileNameWithoutExtension($d)) "pdf"
-                Move-Item -Path $d -Destination $neu -ErrorAction Stop
-                $abl = Ermittle-AblageFuerPfad $d
-                Merke-Verschiebung $d $neu $abl.Ziel $abl.Mitarbeiter ([System.IO.Path]::GetFileNameWithoutExtension($d) -replace '^\d{4}-\d{2}-\d{2}_', '')
-            }
-        }
-        if (Test-Path $zielPfad) { Remove-Item -Path $zielPfad -Force -ErrorAction Stop }   # wird neu aufgebaut
-        try { Move-Item -Path $temp -Destination $zielPfad -ErrorAction Stop }
-        catch { Copy-Item -Path $temp -Destination $zielPfad -Force -ErrorAction Stop; Remove-Item -Path $temp -Force -ErrorAction SilentlyContinue }
-        $basis = [System.IO.Path]::GetFileNameWithoutExtension($zielPfad)
-        $datum = if ($basis -match '^(\d{4}-\d{2}-\d{2})_') { $matches[1] } else { (Get-Date -Format 'yyyy-MM-dd') }
-        Merke-NeuesDokument $zielPfad $text $datum ($basis -replace '^\d{4}-\d{2}-\d{2}_', '')
-        Schreibe-Log "PDFs zusammengefuegt ($(@($dateien).Count) Dateien, $($alleSeiten.Count) Seiten): $zielPfad"
-        return $zielPfad
-    } finally {
-        Entferne-SeitenBilder $alleSeiten
-        Schliesse-Fortschritt
-    }
-}
-
-# Nach jeder Ablage: merken, ob die Datei ein "Teil" ist (wird spaeter geprueft)
-function Merke-ZusammenKandidat($zielpfad) {
-    if (-not $script:AutoZusammenfuegen) { return }
-    $t = Zerlege-TeilName ([System.IO.Path]::GetFileNameWithoutExtension($zielpfad))
-    if (-not $t) { return }
-    $ordner = Split-Path $zielpfad -Parent
-    $script:ZusammenKandidaten[($ordner + "|" + $t.Schluessel)] = @{ Ordner = $ordner; Schluessel = $t.Schluessel; Zeit = (Get-Date) }
-}
-
-# Jede Minute: Gruppen, bei denen seit 2 Minuten kein Teil dazukam, zusammenfuegen
-function Pruefe-AutoZusammenfuegen {
-    if ($script:ZusammenKandidaten.Count -eq 0) { return }
-    foreach ($k in @($script:ZusammenKandidaten.Keys)) {
-        $c = $script:ZusammenKandidaten[$k]
-        if (((Get-Date) - $c.Zeit).TotalMinutes -lt 2) { continue }
-        $script:ZusammenKandidaten.Remove($k)
-        try {
-            $teile = New-Object System.Collections.Generic.List[object]
-            $teileOrdner = Join-Path $c.Ordner $script:EinzelteileOrdnerName
-            foreach ($o in @($c.Ordner, $teileOrdner)) {
-                foreach ($f in @(Get-ChildItem -Path $o -Filter "*.pdf" -File -ErrorAction SilentlyContinue)) {
-                    $t = Zerlege-TeilName $f.BaseName
-                    if ($t -and $t.Schluessel -eq $c.Schluessel) { [void]$teile.Add([PSCustomObject]@{ Pfad = $f.FullName; Nr = $t.Nr; Info = $t }) }
-                }
-            }
-            # doppelte Nummern (Teil schon in Einzelteile UND neu abgelegt): den im Ablageordner nehmen
-            $jeNr = @{}
-            foreach ($t in $teile) {
-                if (-not $jeNr.ContainsKey($t.Nr) -or (Split-Path (Split-Path $t.Pfad -Parent) -Leaf) -ine $script:EinzelteileOrdnerName) { $jeNr[$t.Nr] = $t }
-            }
-            if ($jeNr.Count -lt 2 -or -not $jeNr.ContainsKey(1)) { continue }
-            $sortiert = @($jeNr.Keys | Sort-Object | ForEach-Object { $jeNr[$_].Pfad })
-            $erstes = $jeNr[1].Info
-            $ziel = Join-Path $c.Ordner ((Sanitize-Dateiname ($erstes.Datum + $erstes.Name)) + ".pdf")
-            Fuege-PdfsZusammen $sortiert $ziel $true | Out-Null
-            $trayIcon.ShowBalloonTip(8000, "DiNo1 Druck & Scan", "$($jeNr.Count) Teile zu '$([System.IO.Path]::GetFileName($ziel))' zusammengefuegt.", [System.Windows.Forms.ToolTipIcon]::Info)
-        } catch {
-            Schreibe-Log "FEHLER beim automatischen Zusammenfuegen ($($c.Schluessel)): $($_.Exception.Message)"
-        }
-    }
-}
-
-# Fenster zum Zusammenfuegen von Hand
-function Zeige-Zusammenfuegen($startDateien) {
-    $script:ZfPfade = New-Object System.Collections.Generic.List[string]
-    foreach ($d in @($startDateien)) { if ($d -and -not $script:ZfPfade.Contains($d)) { [void]$script:ZfPfade.Add($d) } }
-    $script:ZfZiehIndex = -1
-    $script:ZfZiehStart = [System.Drawing.Point]::Empty
-
-    $form = New-Object System.Windows.Forms.Form
-    $form.Add_Load({ Setze-Design $this })
-    $form.Text = "PDFs zusammenfuegen - DiNo1 Druck & Scan"
-    $form.ClientSize = New-Object System.Drawing.Size(640, 520)
-    $form.StartPosition = "CenterScreen"
-    $form.FormBorderStyle = "FixedDialog"
-    $form.MaximizeBox = $false
-
-    $hinweis = New-Object System.Windows.Forms.Label
-    $hinweis.Text = "PDFs hier hineinziehen (aus dem Explorer). Reihenfolge per Ziehen in der Liste aendern oder mit den Knoepfen rechts."
-    $hinweis.Location = New-Object System.Drawing.Point(15, 12); $hinweis.Size = New-Object System.Drawing.Size(610, 20)
-    $form.Controls.Add($hinweis)
-
-    $lst = New-Object System.Windows.Forms.ListBox
-    $lst.Location = New-Object System.Drawing.Point(15, 38); $lst.Size = New-Object System.Drawing.Size(480, 300)
-    $lst.Font = New-Object System.Drawing.Font("Segoe UI", 9.5)
-    $lst.IntegralHeight = $false
-    $lst.AllowDrop = $true
-    $form.Controls.Add($lst)
-
-    $txtName = New-Object System.Windows.Forms.TextBox
-    $lblZiel = New-Object System.Windows.Forms.Label
-
-    $aktualisiere = {
-        $sel = $lst.SelectedIndex
-        $lst.BeginUpdate(); $lst.Items.Clear()
-        for ($i = 0; $i -lt $script:ZfPfade.Count; $i++) {
-            $p = $script:ZfPfade[$i]
-            [void]$lst.Items.Add(("{0}.  {1}      ({2})" -f ($i + 1), [System.IO.Path]::GetFileName($p), (Split-Path (Split-Path $p -Parent) -Leaf)))
-        }
-        $lst.EndUpdate()
-        if ($sel -ge 0 -and $sel -lt $lst.Items.Count) { $lst.SelectedIndex = $sel }
-        if ($script:ZfPfade.Count -gt 0) {
-            if (-not $txtName.Text) {
-                $b = [System.IO.Path]::GetFileNameWithoutExtension($script:ZfPfade[0])
-                $t = Zerlege-TeilName $b
-                $txtName.Text = $(if ($t) { $t.Datum + $t.Name } else { $b + " (zusammengefuegt)" })
-            }
-            if (-not $lblZiel.Tag) { $lblZiel.Tag = Split-Path $script:ZfPfade[0] -Parent }
-        }
-        $lblZiel.Text = "Speichern in:  $($lblZiel.Tag)"
-    }
-
-    $fuegeHinzu = {
-        param($liste)
-        foreach ($f in @($liste)) {
-            if ([System.IO.Path]::GetExtension($f) -ieq ".pdf" -and -not $script:ZfPfade.Contains($f)) { [void]$script:ZfPfade.Add($f) }
-        }
-        & $aktualisiere
-    }
-
-    $lst.Add_DragEnter({
-        param($s, $e)
-        if ($e.Data.GetDataPresent([System.Windows.Forms.DataFormats]::FileDrop)) { $e.Effect = [System.Windows.Forms.DragDropEffects]::Copy }
-        elseif ($e.Data.GetDataPresent([System.Windows.Forms.DataFormats]::Text)) { $e.Effect = [System.Windows.Forms.DragDropEffects]::Move }
-    })
-    $lst.Add_DragOver({
-        param($s, $e)
-        if ($e.Data.GetDataPresent([System.Windows.Forms.DataFormats]::FileDrop)) { $e.Effect = [System.Windows.Forms.DragDropEffects]::Copy }
-        elseif ($e.Data.GetDataPresent([System.Windows.Forms.DataFormats]::Text)) { $e.Effect = [System.Windows.Forms.DragDropEffects]::Move }
-    })
-    $lst.Add_DragDrop({
-        param($s, $e)
-        if ($e.Data.GetDataPresent([System.Windows.Forms.DataFormats]::FileDrop)) {
-            & $fuegeHinzu ([string[]]$e.Data.GetData([System.Windows.Forms.DataFormats]::FileDrop))
-            return
-        }
-        $t = [string]$e.Data.GetData([System.Windows.Forms.DataFormats]::Text)
-        if ($t -notmatch '^DINO1IDX:(\d+)$') { return }
-        $von = [int]$matches[1]
-        $nach = $lst.IndexFromPoint($lst.PointToClient((New-Object System.Drawing.Point($e.X, $e.Y))))
-        if ($nach -lt 0) { $nach = $script:ZfPfade.Count - 1 }
-        if ($von -eq $nach -or $von -lt 0 -or $von -ge $script:ZfPfade.Count) { return }
-        $p = $script:ZfPfade[$von]; $script:ZfPfade.RemoveAt($von); $script:ZfPfade.Insert($nach, $p)
-        & $aktualisiere
-        $lst.SelectedIndex = $nach
-    })
-    $lst.Add_MouseDown({
-        param($s, $e)
-        $script:ZfZiehIndex = $lst.IndexFromPoint($e.Location)
-        $script:ZfZiehStart = $e.Location
-    })
-    $lst.Add_MouseUp({ $script:ZfZiehIndex = -1 })
-    $lst.Add_MouseMove({
-        param($s, $e)
-        if ($e.Button -ne [System.Windows.Forms.MouseButtons]::Left -or $script:ZfZiehIndex -lt 0) { return }
-        $g = [System.Windows.Forms.SystemInformation]::DragSize
-        if ([Math]::Abs($e.X - $script:ZfZiehStart.X) -lt $g.Width -and [Math]::Abs($e.Y - $script:ZfZiehStart.Y) -lt $g.Height) { return }
-        $i = $script:ZfZiehIndex; $script:ZfZiehIndex = -1
-        [void]$lst.DoDragDrop("DINO1IDX:$i", [System.Windows.Forms.DragDropEffects]::Move)
-    })
-
-    $knopf = {
-        param($text, $y, $aktion)
-        $b = New-Object System.Windows.Forms.Button
-        $b.Text = $text
-        $b.Location = New-Object System.Drawing.Point(505, $y); $b.Size = New-Object System.Drawing.Size(120, 30)
-        $b.Add_Click($aktion)
-        $form.Controls.Add($b)
-    }
-    & $knopf "Hinzufuegen..." 38 {
-        $dlg = New-Object System.Windows.Forms.OpenFileDialog
-        $dlg.Filter = "PDF-Dateien (*.pdf)|*.pdf"; $dlg.Multiselect = $true
-        if ($lblZiel.Tag -and (Test-Path $lblZiel.Tag)) { $dlg.InitialDirectory = $lblZiel.Tag }
-        if ($dlg.ShowDialog($form) -eq [System.Windows.Forms.DialogResult]::OK) { & $fuegeHinzu $dlg.FileNames }
-    }
-    & $knopf "Nach oben" 78 {
-        $i = $lst.SelectedIndex
-        if ($i -gt 0) { $p = $script:ZfPfade[$i]; $script:ZfPfade.RemoveAt($i); $script:ZfPfade.Insert($i - 1, $p); & $aktualisiere; $lst.SelectedIndex = $i - 1 }
-    }
-    & $knopf "Nach unten" 114 {
-        $i = $lst.SelectedIndex
-        if ($i -ge 0 -and $i -lt $script:ZfPfade.Count - 1) { $p = $script:ZfPfade[$i]; $script:ZfPfade.RemoveAt($i); $script:ZfPfade.Insert($i + 1, $p); & $aktualisiere; $lst.SelectedIndex = $i + 1 }
-    }
-    & $knopf "Entfernen" 150 {
-        $i = $lst.SelectedIndex
-        if ($i -ge 0) { $script:ZfPfade.RemoveAt($i); & $aktualisiere }
-    }
-    & $knopf "Ansehen" 186 {
-        $i = $lst.SelectedIndex
-        if ($i -ge 0 -and (Test-Path $script:ZfPfade[$i])) { Start-Process -FilePath $script:ZfPfade[$i] }
-    }
-
-    $lblName = New-Object System.Windows.Forms.Label
-    $lblName.Text = "Name der neuen Datei:"
-    $lblName.Location = New-Object System.Drawing.Point(15, 352); $lblName.AutoSize = $true
-    $form.Controls.Add($lblName)
-    $txtName.Location = New-Object System.Drawing.Point(160, 349); $txtName.Width = 465
-    $form.Controls.Add($txtName)
-
-    $lblZiel.Location = New-Object System.Drawing.Point(15, 384); $lblZiel.Size = New-Object System.Drawing.Size(480, 20)
-    $lblZiel.AutoEllipsis = $true; $lblZiel.UseMnemonic = $false
-    $form.Controls.Add($lblZiel)
-    & $knopf "Ordner..." 378 {
-        $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
-        if ($lblZiel.Tag -and (Test-Path $lblZiel.Tag)) { $dlg.SelectedPath = $lblZiel.Tag }
-        if ($dlg.ShowDialog($form) -eq [System.Windows.Forms.DialogResult]::OK) { $lblZiel.Tag = $dlg.SelectedPath; & $aktualisiere }
-    }
-
-    $chkWeg = New-Object System.Windows.Forms.CheckBox
-    $chkWeg.Text = "Einzeldateien danach in den Unterordner '$($script:EinzelteileOrdnerName)' verschieben"
-    $chkWeg.Checked = $true
-    $chkWeg.Location = New-Object System.Drawing.Point(15, 414); $chkWeg.AutoSize = $true
-    $form.Controls.Add($chkWeg)
-
-    $btnLos = New-Object System.Windows.Forms.Button
-    $btnLos.Text = "Zusammenfuegen"
-    $btnLos.Location = New-Object System.Drawing.Point(375, 470); $btnLos.Size = New-Object System.Drawing.Size(130, 34)
-    $form.Controls.Add($btnLos)
-    $form.AcceptButton = $btnLos
-    $btnZu = New-Object System.Windows.Forms.Button
-    $btnZu.Text = "Schliessen"
-    $btnZu.Location = New-Object System.Drawing.Point(515, 470); $btnZu.Size = New-Object System.Drawing.Size(110, 34)
-    $btnZu.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
-    $form.Controls.Add($btnZu)
-    $form.CancelButton = $btnZu
-
-    $btnLos.Add_Click({
-        if ($script:ZfPfade.Count -lt 2) { [System.Windows.Forms.MessageBox]::Show($form, "Bitte mindestens zwei PDFs in die Liste ziehen.", "Zusammenfuegen") | Out-Null; return }
-        $name = Sanitize-Dateiname ($txtName.Text -replace '\.pdf$', '')
-        if (-not $name) { [System.Windows.Forms.MessageBox]::Show($form, "Bitte einen Dateinamen eingeben.", "Zusammenfuegen") | Out-Null; return }
-        $ordner = [string]$lblZiel.Tag
-        $ziel = Join-Path $ordner "$name.pdf"
-        $istTeil = $false
-        foreach ($p in $script:ZfPfade) { if ($p -ieq $ziel) { $istTeil = $true } }
-        if ((Test-Path $ziel) -and -not ($istTeil -and $chkWeg.Checked)) {
-            $a = [System.Windows.Forms.MessageBox]::Show($form, "Die Datei '$name.pdf' gibt es dort schon. Ersetzen?", "Zusammenfuegen", [System.Windows.Forms.MessageBoxButtons]::YesNo)
-            if ($a -ne [System.Windows.Forms.DialogResult]::Yes) { return }
-        }
-        $form.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
-        try {
-            $neu = Fuege-PdfsZusammen @($script:ZfPfade) $ziel $chkWeg.Checked
-            $form.Cursor = [System.Windows.Forms.Cursors]::Default
-            $a = [System.Windows.Forms.MessageBox]::Show($form, "Fertig: $neu`n`nJetzt ansehen?", "Zusammenfuegen", [System.Windows.Forms.MessageBoxButtons]::YesNo)
-            if ($a -eq [System.Windows.Forms.DialogResult]::Yes) { Start-Process -FilePath $neu }
-            $form.Close()
-        } catch {
-            $form.Cursor = [System.Windows.Forms.Cursors]::Default
-            [System.Windows.Forms.MessageBox]::Show($form, "Zusammenfuegen fehlgeschlagen: $($_.Exception.Message)", "Zusammenfuegen") | Out-Null
-        }
-    })
-
-    & $aktualisiere
-    [void]$form.ShowDialog()
-    $form.Dispose()
-}
-
-# ======================= HINTERGRUND-AUFGABEN (jede Minute) =======================
-# Herzschlag fuer den Waechter, Mitarbeiterliste abgleichen, Tagesbericht,
-# automatisches Zusammenfuegen und Altbestand-Indexierung anstossen.
-$script:NebenStart = Get-Date
-$script:NebenZaehler = 0
-function Fuehre-NebenaufgabenAus {
-    if ($script:WirdBeendet) { return }
-    $script:NebenZaehler++
-    Schreibe-Herzschlag
-    if (($script:NebenZaehler % 2) -ne 1) { return }   # Rest nur jede Minute (Takt 30 s)
-    try { if (($script:NebenZaehler % 10) -eq 1) { Gleiche-MitarbeiterAb } } catch {}
-    try { Pruefe-Tagesbericht } catch {}
-    try { if ($timer.Enabled) { Pruefe-AutoZusammenfuegen } } catch {}
-    try {
-        if (((Get-Date) - $script:NebenStart).TotalMinutes -ge 10 -and ((Get-Date) - $script:IndexLetzterStart).TotalHours -ge 24) { Starte-AltbestandIndexierung }
-    } catch {}
-}
-
-$script:NebenTimer = New-Object System.Windows.Forms.Timer
-$script:NebenTimer.Interval = 30000
-$script:NebenTimer.Add_Tick({ try { Fuehre-NebenaufgabenAus } catch {} })
-
-# Indexier-Prozess (Kopie dieser Datei als DiNo1-Indexierung.ps1): nur
-# Altbestand abarbeiten, kein Tray-Symbol, dann beenden.
-if ($script:IndexModus) {
-    try { Gleiche-MitarbeiterAb } catch {}
-    try { Fuehre-AltbestandIndexierungAus } catch { Schreibe-Log "FEHLER in der Altbestand-Indexierung: $($_.Exception.Message)" }
-    exit
-}
-
+# ======================= ZENTRALE MITARBEITERLISTE =======================
+# Die Mitarbeiterliste liegt fuer alle PCs eines Shops in EINER Datei im
+# DiNo1-Ordner des Shops ("<Shop>\DiNo1-Druck-Scan\DiNo1-Mitarbeiter.txt",
+# je Zeile "Name = Ordnername"). Eine aeltere Datei direkt im Shop-Ordner
+# (Version 35) wird automatisch dorthin verschoben.
+# Beim ersten Start uebernimmt jeder PC einmalig seine bisherigen Mitarbeiter
+# dorthin (fehlt die Datei, wird sie angelegt). Danach gilt die Datei; ist
+# HiDrive nicht erreichbar, wird die zuletzt gelesene Kopie verwendet.
+$script:MitarbeiterDateiName      = "DiNo1-Mitarbeiter.txt"
+$script:MitarbeiterLokalKopie     = Join-Path $script:DatenOrdner "Mitarbeiter_zentral.txt"
+$script:MitarbeiterAbgleichMerker = Join-Path $script:DatenOrdner ("Mitarbeiter_abgeglichen_" + (Sanitize-Dateiname $env:USERNAME) + ".txt")
+$script:ZentraleListeAktiv        = $false
+$script:KonfigMitarbeiter         = $MitarbeiterOrdner   # Liste aus dem Abschnitt KONFIGURATION
+
+function Get-ZentraleMitarbeiterDatei {
+    $basis = $ShopOrdner
+    if (-not [string]::IsNullOrWhiteSpace($StatusOrdner) -and $StatusOrdner.Trim() -ne "-") { $basis = $StatusOrdner }
+    if ([string]::IsNullOrWhiteSpace($basis)) { return $null }
+    try { return (Join-Path $basis $script:MitarbeiterDateiName) } catch { return $null }
+}
+
+# Version 35 legte die Liste direkt in den Shop-Ordner - in den DiNo1-Ordner umziehen
+function Ziehe-MitarbeiterDateiUm($datei) {
+    try {
+        if ([string]::IsNullOrWhiteSpace($ShopOrdner)) { return }
+        $alt = Join-Path $ShopOrdner $script:MitarbeiterDateiName
+        if ($alt -ieq $datei -or -not (Test-Path $alt -ErrorAction SilentlyContinue)) { return }
+        $ordner = Split-Path $datei -Parent
+        if (-not (Test-Path $ordner)) { New-Item -ItemType Directory -Path $ordner -Force -ErrorAction Stop | Out-Null }
+        if (-not (Test-Path $datei)) { Copy-Item -Path $alt -Destination $datei -Force -ErrorAction Stop }
+        Remove-Item -Path $alt -Force -ErrorAction Stop
+        Schreibe-Log "Mitarbeiterliste in den DiNo1-Ordner verschoben: $datei"
+    } catch {
+        Schreibe-Log "HINWEIS: Mitarbeiterliste konnte nicht in den DiNo1-Ordner verschoben werden: $($_.Exception.Message)"
+    }
+}
+
+function Lese-MitarbeiterDatei($pfad) {
+    if (-not $pfad -or -not (Test-Path $pfad -ErrorAction SilentlyContinue)) { return $null }
+    $liste = [ordered]@{}
+    foreach ($z in [System.IO.File]::ReadAllLines($pfad, [System.Text.Encoding]::UTF8)) {
+        $t = $z.Trim()
+        if (-not $t -or $t.StartsWith("#")) { continue }
+        $i = $t.IndexOf("=")
+        if ($i -lt 1) { continue }
+        $name = $t.Substring(0, $i).Trim()
+        $ordner = $t.Substring($i + 1).Trim()
+        if (-not $name -or -not $ordner) { continue }
+        if (-not $liste.Contains($name)) { $liste[$name] = $ordner }
+    }
+    return $liste
+}
+
+function Schreibe-MitarbeiterDatei($pfad, $liste) {
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.AppendLine("# DiNo1 Druck & Scan - Mitarbeiterliste fuer alle PCs dieses Shops")
+    [void]$sb.AppendLine("# Je Zeile:  Name (wie im Auswahlfeld) = Ordnername im Mitarbeiter-Ordner auf HiDrive")
+    [void]$sb.AppendLine("# Aenderungen gelten nach wenigen Minuten auf allen PCs. Zeilen mit # werden ignoriert.")
+    [void]$sb.AppendLine("")
+    foreach ($k in $liste.Keys) { [void]$sb.AppendLine("$k = $($liste[$k])") }
+    $zielOrdner = Split-Path $pfad -Parent
+    if ($zielOrdner -and -not (Test-Path $zielOrdner)) { New-Item -ItemType Directory -Path $zielOrdner -Force -ErrorAction Stop | Out-Null }
+    # Lokal schreiben, dann kopieren (direktes Schreiben lehnt HiDrive teils ab)
+    $tmp = Join-Path $ScanTempOrdner ("Mitarbeiter_" + [guid]::NewGuid().ToString("N") + ".txt")
+    [System.IO.File]::WriteAllText($tmp, $sb.ToString(), (New-Object System.Text.UTF8Encoding($true)))
+    try {
+        try { Copy-Item -Path $tmp -Destination $pfad -Force -ErrorAction Stop }
+        catch { Remove-Item -Path $pfad -Force -ErrorAction SilentlyContinue; Copy-Item -Path $tmp -Destination $pfad -Force -ErrorAction Stop }
+    } finally {
+        Remove-Item -Path $tmp -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Ist-BeispielMitarbeiter($ordner) {
+    return ("$ordner" -like "Ordnername_Mitarbeiter_*" -or "$ordner" -eq "1234567 (Max Mustermann)")
+}
+
+function Gleiche-MitarbeiterAb {
+    try {
+        $datei = Get-ZentraleMitarbeiterDatei
+        if (-not $datei) { return }
+        $erreichbar = $false
+        try { $erreichbar = [bool](Test-Path $ShopOrdner -ErrorAction SilentlyContinue) } catch {}
+        $zentral = $null
+        if ($erreichbar) {
+            Ziehe-StatusOrdnerUm
+            Ziehe-MitarbeiterDateiUm $datei
+            try { $zentral = Lese-MitarbeiterDatei $datei }
+            catch { Schreibe-Log "HINWEIS: Mitarbeiterliste '$datei' konnte nicht gelesen werden: $($_.Exception.Message)"; return }
+
+            if (-not (Test-Path $script:MitarbeiterAbgleichMerker)) {
+                # Einmalig: Mitarbeiter dieses PCs in die zentrale Liste uebernehmen
+                $neu = [ordered]@{}
+                if ($zentral) { foreach ($k in $zentral.Keys) { $neu[$k] = $zentral[$k] } }
+                $hinzu = New-Object System.Collections.Generic.List[string]
+                foreach ($k in @($script:KonfigMitarbeiter.Keys)) {
+                    $o = "$($script:KonfigMitarbeiter[$k])".Trim()
+                    if (-not $o -or (Ist-BeispielMitarbeiter $o)) { continue }
+                    if (-not $neu.Contains($k)) { $neu[$k] = $o; [void]$hinzu.Add($k) }
+                }
+                if ($hinzu.Count -gt 0) {
+                    Schreibe-MitarbeiterDatei $datei $neu
+                    Schreibe-Log "Zentrale Mitarbeiterliste '$datei': $($hinzu.Count) Mitarbeiter dieses PCs uebernommen ($($hinzu -join ', '))."
+                    $zentral = Lese-MitarbeiterDatei $datei
+                }
+                Set-Content -Path $script:MitarbeiterAbgleichMerker -Value (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') -Encoding ASCII
+            }
+            if ($zentral -and $zentral.Count -gt 0) {
+                try { Copy-Item -Path $datei -Destination $script:MitarbeiterLokalKopie -Force -ErrorAction Stop } catch {}
+            }
+        } elseif (-not $script:ZentraleListeAktiv -and (Test-Path $script:MitarbeiterLokalKopie)) {
+            # HiDrive (noch) nicht erreichbar: zuletzt bekannte Liste verwenden
+            try { $zentral = Lese-MitarbeiterDatei $script:MitarbeiterLokalKopie } catch {}
+        }
+        if ($null -eq $zentral -or $zentral.Count -eq 0) { return }
+
+        $altText = (@($script:MitarbeiterOrdner.Keys) | ForEach-Object { "$_=$($script:MitarbeiterOrdner[$_])" }) -join "|"
+        $neuText = (@($zentral.Keys) | ForEach-Object { "$_=$($zentral[$_])" }) -join "|"
+        $script:ZentraleListeAktiv = $true
+        if ($altText -cne $neuText) {
+            $script:MitarbeiterOrdner = $zentral
+            Schreibe-Log "Mitarbeiterliste aus '$datei' verwendet: $($zentral.Count) Mitarbeiter."
+        }
+    } catch {
+        Schreibe-Log "HINWEIS: Abgleich der Mitarbeiterliste fehlgeschlagen: $($_.Exception.Message)"
+    }
+}
+
+# "Ordner anpassen": Mitarbeiterliste zusaetzlich zentral im DiNo1-Ordner des Shops speichern.
+# Rueckgabe $true, wenn die zentrale Datei geschrieben wurde.
+function Speichere-ZentraleMitarbeiter($shopOrdnerNeu, $paare) {
+    try {
+        if ([string]::IsNullOrWhiteSpace($shopOrdnerNeu) -or -not (Test-Path $shopOrdnerNeu -ErrorAction SilentlyContinue)) { return $false }
+        $liste = [ordered]@{}
+        foreach ($p in $paare) { $liste[$p.Name] = $p.Ordner }
+        $datei = Get-ZentraleMitarbeiterDatei
+        if (-not $datei) { return $false }
+        Schreibe-MitarbeiterDatei $datei $liste
+        try { Copy-Item -Path $datei -Destination $script:MitarbeiterLokalKopie -Force -ErrorAction Stop } catch {}
+        Set-Content -Path $script:MitarbeiterAbgleichMerker -Value (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') -Encoding ASCII
+        $script:MitarbeiterOrdner = $liste
+        $script:ZentraleListeAktiv = $true
+        Schreibe-Log "Zentrale Mitarbeiterliste gespeichert: $datei ($($liste.Count) Mitarbeiter)."
+        return $true
+    } catch {
+        Schreibe-Log "HINWEIS: Zentrale Mitarbeiterliste konnte nicht gespeichert werden: $($_.Exception.Message)"
+        [System.Windows.Forms.MessageBox]::Show("Die Mitarbeiterliste konnte nicht im Shop-Ordner gespeichert werden:`n$($_.Exception.Message)`n`nSie gilt vorerst nur fuer diesen PC.", "Ordner anpassen") | Out-Null
+        return $false
+    }
+}
+
+# ======================= SELBSTHEILUNG (WAECHTER) =======================
+# Der Watcher schreibt jede halbe Minute einen "Herzschlag" (Prozess-Nr. +
+# Uhrzeit). Ein kleiner zweiter Prozess (Waechter.ps1) prueft das jede Minute:
+# Bleibt der Herzschlag laenger als 10 Minuten aus (Watcher haengt) oder ist
+# der Watcher-Prozess verschwunden (Absturz), wird er beendet bzw. neu
+# gestartet. Bei "Watcher beenden" im Tray-Menue bleibt er aus.
+$script:BenutzerKennung = Sanitize-Dateiname $env:USERNAME
+$script:HerzschlagDatei = Join-Path $script:DatenOrdner ("Herzschlag_" + $script:BenutzerKennung + ".txt")
+$script:BeendetDatei    = Join-Path $script:DatenOrdner ("Beendet_" + $script:BenutzerKennung + ".txt")
+$script:WaechterDatei   = Join-Path $script:DatenOrdner "Waechter.ps1"
+$script:WaechterMutexName = "Local\DiNo1DruckScanWaechter"
+
+function Schreibe-Herzschlag {
+    try { [System.IO.File]::WriteAllText($script:HerzschlagDatei, "$PID|$((Get-Date).Ticks)") } catch {}
+}
+
+function Starte-Waechter {
+    try {
+        $inhalt = @'
+# DiNo1 Druck & Scan - Waechter: startet den Watcher neu, wenn er haengt oder abgestuerzt ist.
+# Wird vom Watcher selbst angelegt und gestartet - bitte nicht von Hand aendern.
+$mutex = New-Object System.Threading.Mutex($false, "Local\DiNo1DruckScanWaechter")
+$meins = $false
+try { $meins = $mutex.WaitOne(0) } catch { $meins = $true }
+if (-not $meins) { exit }
+$ordner   = $PSScriptRoot
+$kennung  = ($env:USERNAME -replace '[\\/:*?"<>|]', '_').Trim()
+$herz     = Join-Path $ordner ("Herzschlag_" + $kennung + ".txt")
+$beendet  = Join-Path $ordner ("Beendet_" + $kennung + ".txt")
+$logDatei = "__LOGDATEI__"
+$watcher  = "__WATCHER__"
+$eigenStand = (Get-Item $PSCommandPath).LastWriteTimeUtc
+$neustarts = New-Object System.Collections.Generic.List[datetime]
+function Log($t) { try { Add-Content -Path $logDatei -Value ("{0}  WAECHTER: {1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $t) -Encoding UTF8 } catch {} }
+while ($true) {
+    Start-Sleep -Seconds 60
+    if (Test-Path $beendet) { break }
+    try { if ((Get-Item $PSCommandPath).LastWriteTimeUtc -ne $eigenStand) { $mutex.ReleaseMutex(); Start-Process -FilePath "conhost.exe" -ArgumentList ("--headless powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"" + $PSCommandPath + "`""); exit } } catch {}
+    if (-not (Test-Path $herz)) { continue }
+    $wPid = 0; $zeit = Get-Date
+    try {
+        $teile = ([System.IO.File]::ReadAllText($herz)).Trim() -split '\|'
+        $wPid = [int]$teile[0]; $zeit = New-Object DateTime ([long]$teile[1])
+    } catch { continue }
+    $alter = ((Get-Date) - $zeit).TotalMinutes
+    $lebt = $false
+    if ($wPid -gt 0) { $lebt = [bool](Get-Process -Id $wPid -ErrorAction SilentlyContinue) }
+    if ($lebt -and $alter -lt 10) { continue }
+    if (-not $lebt -and $alter -lt 2) { continue }
+    while ($neustarts.Count -gt 0 -and ((Get-Date) - $neustarts[0]).TotalMinutes -gt 60) { $neustarts.RemoveAt(0) }
+    if ($neustarts.Count -ge 3) { continue }
+    if ($lebt) {
+        Log "Watcher (Prozess $wPid) reagiert seit $([int]$alter) Minuten nicht - wird beendet und neu gestartet."
+        try { Stop-Process -Id $wPid -Force -ErrorAction Stop } catch { Log "Beenden fehlgeschlagen: $($_.Exception.Message)" }
+        Start-Sleep -Seconds 3
+    } else {
+        Log "Watcher laeuft nicht mehr (abgestuerzt?) - wird neu gestartet."
+    }
+    try { [System.IO.File]::WriteAllText($herz, "0|$((Get-Date).Ticks)") } catch {}
+    Start-Process -FilePath "conhost.exe" -ArgumentList ("--headless powershell.exe -ExecutionPolicy Bypass -File `"" + $watcher + "`"")
+    $neustarts.Add((Get-Date))
+}
+'@
+        $inhalt = $inhalt.Replace("__LOGDATEI__", $LogDatei).Replace("__WATCHER__", $PSCommandPath)
+        $alt = if (Test-Path $script:WaechterDatei) { [System.IO.File]::ReadAllText($script:WaechterDatei) } else { "" }
+        if ($alt -ne $inhalt) { [System.IO.File]::WriteAllText($script:WaechterDatei, $inhalt, [System.Text.Encoding]::ASCII) }
+
+        # Laeuft schon ein Waechter (in dieser Anmeldung)?
+        $laeuft = $false
+        try { $m = [System.Threading.Mutex]::OpenExisting($script:WaechterMutexName); $m.Dispose(); $laeuft = $true } catch {}
+        if (-not $laeuft) {
+            Start-Process -FilePath "conhost.exe" -ArgumentList ("--headless powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"" + $script:WaechterDatei + "`"")
+            Schreibe-Log "Waechter gestartet (startet den Watcher bei Haengern/Abstuerzen automatisch neu)."
+        }
+    } catch {
+        Schreibe-Log "HINWEIS: Waechter konnte nicht gestartet werden: $($_.Exception.Message)"
+    }
+}
+
+# ======================= TAGESBERICHT =======================
+# Abends (ab $script:TagesberichtUhrzeit) einmal pro Tag: kurze Meldung am
+# Tray-Symbol, was heute auf diesem PC abgelegt wurde und ob etwas haengen
+# geblieben ist. Klick darauf (oder Tray -> "Tagesbericht") zeigt die Liste.
+# Ausserdem landet der Bericht als Textdatei im Shop-Ordner (Status\Berichte).
+$script:TagesberichtUhrzeit = "18:00"
+$script:TagesberichtMerker  = Join-Path $script:DatenOrdner ("Tagesbericht_" + (Sanitize-Dateiname $env:USERNAME) + ".txt")
+$script:BalloonAktion = $null
+
+function Ermittle-Tagesbericht([DateTime]$tag) {
+    $praefix = $tag.ToString("yyyy-MM-dd")
+    $eintraege = New-Object System.Collections.Generic.List[object]
+    try {
+        if (Test-Path $script:SuchindexDatei) {
+            foreach ($z in [System.IO.File]::ReadAllLines($script:SuchindexDatei, [System.Text.Encoding]::UTF8)) {
+                if (-not $z.StartsWith('{"Zeit":"' + $praefix)) { continue }
+                try { $e = $z | ConvertFrom-Json } catch { continue }
+                if ($e.PSObject.Properties["Alt"] -or $e.PSObject.Properties["Quelle"]) { continue }   # Verschiebung/Zusammenfuegung, keine neue Ablage
+                [void]$eintraege.Add($e)
+            }
+        }
+    } catch {}
+    $nichtUebertragen = @(Get-ChildItem -Path $AusweichOrdner -File -Recurse -ErrorAction SilentlyContinue).Count
+    $uebersprungen = @(Get-ChildItem -Path $UebersprungenOrdner -Filter "*.pdf" -File -ErrorAction SilentlyContinue).Count
+    $fehler = 0
+    try {
+        if (Test-Path $LogDatei) {
+            foreach ($z in [System.IO.File]::ReadAllLines($LogDatei)) { if ($z.StartsWith($praefix) -and $z.Contains("FEHLER")) { $fehler++ } }
+        }
+    } catch {}
+    $jeZiel = @{}
+    foreach ($e in $eintraege) { $k = [string]$e.Ziel; if (-not $jeZiel.ContainsKey($k)) { $jeZiel[$k] = 0 }; $jeZiel[$k]++ }
+    return [PSCustomObject]@{
+        Tag = $tag; Eintraege = $eintraege; JeZiel = $jeZiel
+        NichtUebertragen = $nichtUebertragen; Uebersprungen = $uebersprungen; Fehler = $fehler
+    }
+}
+
+function Tagesbericht-Kurztext($b) {
+    $teile = @()
+    foreach ($k in @("Mitarbeiter", "Shop", "Kasse", "Lokal")) { if ($b.JeZiel.ContainsKey($k)) { $teile += "$k $($b.JeZiel[$k])" } }
+    $text = "Heute abgelegt: $($b.Eintraege.Count) Dokument(e)"
+    if ($teile.Count -gt 0) { $text += " (" + ($teile -join ", ") + ")" }
+    $probleme = @()
+    if ($b.NichtUebertragen -gt 0) { $probleme += "$($b.NichtUebertragen) noch nicht uebertragen" }
+    if ($b.Uebersprungen -gt 0) { $probleme += "$($b.Uebersprungen) uebersprungen" }
+    if ($b.Fehler -gt 0) { $probleme += "$($b.Fehler) Fehler im Log" }
+    if ($probleme.Count -gt 0) { $text += ".`nAchtung: " + ($probleme -join ", ") + "." } else { $text += ". Alles erledigt." }
+    return $text
+}
+
+function Speichere-TagesberichtImShop($b) {
+    try {
+        if ([string]::IsNullOrWhiteSpace($StatusOrdner) -or $StatusOrdner.Trim() -eq "-" -or -not (Test-Path $StatusOrdner -ErrorAction SilentlyContinue)) { return }
+        $ordner = Join-Path $StatusOrdner "Berichte"
+        if (-not (Test-Path $ordner)) { New-Item -ItemType Directory -Path $ordner -Force | Out-Null }
+        $zeilen = New-Object System.Collections.Generic.List[string]
+        [void]$zeilen.Add("DiNo1 Druck & Scan - Tagesbericht $($b.Tag.ToString('dd.MM.yyyy')) - $StandortName - PC $env:COMPUTERNAME ($env:USERNAME)")
+        [void]$zeilen.Add("")
+        [void]$zeilen.Add((Tagesbericht-Kurztext $b))
+        [void]$zeilen.Add("")
+        foreach ($e in $b.Eintraege) {
+            $ablage = if ($e.Ziel -eq "Mitarbeiter") { "Mitarbeiter: $($e.Mitarbeiter)" } else { "$($e.Ziel)" }
+            [void]$zeilen.Add(("{0}  {1,-28}  {2}  ->  {3}" -f ([string]$e.Zeit).Substring(11), $ablage, $e.Bezeichnung, $e.Pfad))
+        }
+        $tmp = Join-Path $ScanTempOrdner ("Bericht_" + [guid]::NewGuid().ToString("N") + ".txt")
+        [System.IO.File]::WriteAllLines($tmp, $zeilen, (New-Object System.Text.UTF8Encoding($true)))
+        $ziel = Join-Path $ordner ($b.Tag.ToString("yyyy-MM-dd") + "_" + (Get-PcKennung) + ".txt")
+        try { Copy-Item -Path $tmp -Destination $ziel -Force -ErrorAction Stop }
+        catch { Remove-Item -Path $ziel -Force -ErrorAction SilentlyContinue; Copy-Item -Path $tmp -Destination $ziel -Force -ErrorAction SilentlyContinue }
+        Remove-Item -Path $tmp -Force -ErrorAction SilentlyContinue
+    } catch {}
+}
+
+# Wird jede Minute aufgerufen: zur eingestellten Uhrzeit einmal pro Tag melden
+function Pruefe-Tagesbericht {
+    try {
+        $jetzt = Get-Date
+        $grenze = [DateTime]::ParseExact($jetzt.ToString("yyyy-MM-dd") + " " + $script:TagesberichtUhrzeit, "yyyy-MM-dd HH:mm", $null)
+        if ($jetzt -lt $grenze) { return }
+        $heute = $jetzt.ToString("yyyy-MM-dd")
+        $zuletzt = ""
+        if (Test-Path $script:TagesberichtMerker) { $zuletzt = ([System.IO.File]::ReadAllText($script:TagesberichtMerker)).Trim() }
+        if ($zuletzt -eq $heute) { return }
+        [System.IO.File]::WriteAllText($script:TagesberichtMerker, $heute)
+        $b = Ermittle-Tagesbericht $jetzt.Date
+        $problem = ($b.NichtUebertragen -gt 0 -or $b.Uebersprungen -gt 0 -or $b.Fehler -gt 0)
+        Speichere-TagesberichtImShop $b   # immer - damit der Gesamtbericht sieht, dass der PC lief
+        if ($b.Eintraege.Count -eq 0 -and -not $problem) { return }   # heute nichts los - keine Meldung
+        $script:BalloonAktion = { Zeige-Tagesbericht }
+        $symbol = if ($problem) { [System.Windows.Forms.ToolTipIcon]::Warning } else { [System.Windows.Forms.ToolTipIcon]::Info }
+        $trayIcon.ShowBalloonTip(15000, "DiNo1 Tagesbericht", ((Tagesbericht-Kurztext $b) + "`nKlicken fuer Details."), $symbol)
+    } catch {
+        Schreibe-Log "HINWEIS: Tagesbericht fehlgeschlagen: $($_.Exception.Message)"
+    }
+}
+
+function Zeige-Tagesbericht {
+    $b = Ermittle-Tagesbericht (Get-Date).Date
+    $form = New-Object System.Windows.Forms.Form
+    $form.Add_Load({ Setze-Design $this })
+    $form.Text = "Tagesbericht $((Get-Date).ToString('dd.MM.yyyy')) - DiNo1 Druck & Scan"
+    $form.Size = New-Object System.Drawing.Size(860, 480)
+    $form.StartPosition = "CenterScreen"
+    $form.MinimumSize = New-Object System.Drawing.Size(600, 300)
+
+    $kopf = New-Object System.Windows.Forms.Label
+    $kopf.Dock = "Top"
+    $kopf.Height = 64
+    $kopf.Padding = New-Object System.Windows.Forms.Padding(12, 10, 12, 4)
+    $kopf.Font = New-Object System.Drawing.Font("Segoe UI", 10)
+    $kopf.UseMnemonic = $false
+    $kopf.Text = Tagesbericht-Kurztext $b
+    $form.Controls.Add($kopf)
+
+    $grid = New-Object System.Windows.Forms.DataGridView
+    $grid.Dock = "Fill"
+    $grid.ReadOnly = $true
+    $grid.AllowUserToAddRows = $false
+    $grid.RowHeadersVisible = $false
+    $grid.SelectionMode = "FullRowSelect"
+    $grid.AutoSizeColumnsMode = "Fill"
+    foreach ($s in @(@("Uhrzeit", 50), @("Ablage", 120), @("Bezeichnung", 160), @("Datei", 300))) {
+        $i = $grid.Columns.Add($s[0], $s[0]); $grid.Columns[$i].FillWeight = $s[1]
+    }
+    foreach ($e in $b.Eintraege) {
+        $ablage = if ($e.Ziel -eq "Mitarbeiter") { "Mitarbeiter: $($e.Mitarbeiter)" } else { "$($e.Ziel)" }
+        [void]$grid.Rows.Add(([string]$e.Zeit).Substring(11, 5), $ablage, [string]$e.Bezeichnung, [string]$e.Pfad)
+    }
+    $grid.Add_CellDoubleClick({
+        param($s, $e)
+        if ($e.RowIndex -lt 0) { return }
+        $p = [string]$grid.Rows[$e.RowIndex].Cells["Datei"].Value
+        if ($p -and (Test-Path $p)) { Start-Process -FilePath $p }
+    })
+    $form.Controls.Add($grid)
+    $grid.BringToFront()
+    [void]$form.ShowDialog()
+}
+
+# ======================= PDF-SEITEN ALS BILD (Vorschau, Zusammenfuegen, Altbestand) =======================
+# Rendert Seiten einer PDF ueber die PDF-Anzeige von Windows (Windows.Data.Pdf)
+# als PNG-Dateien in den Scan-Temp-Ordner. Rueckgabe: Liste von Objekten
+# (Png = Dateipfad, Dpi = Aufloesung) - die PNGs muss der Aufrufer loeschen.
+function Rendere-PdfSeiten($pdfPfad, [int]$breitePx = 1654, [int]$maxSeiten = 0) {
+    $liste = New-Object System.Collections.Generic.List[object]
+    if (-not (Initialisiere-WinRT)) { throw "Die PDF-Anzeige von Windows ist auf diesem PC nicht verfuegbar." }
+    $kennung = [guid]::NewGuid().ToString("N")
+    $kopie = Join-Path $ScanTempOrdner ("Seiten_" + $kennung + ".pdf")
+    try {
+        Copy-Item -Path $pdfPfad -Destination $kopie -Force -ErrorAction Stop
+        $datei = Warte-WinRT ([Windows.Storage.StorageFile]::GetFileFromPathAsync($kopie)) ([Windows.Storage.StorageFile])
+        $dok = Warte-WinRT ([Windows.Data.Pdf.PdfDocument]::LoadFromFileAsync($datei)) ([Windows.Data.Pdf.PdfDocument])
+        $anzahl = [int]$dok.PageCount
+        if ($maxSeiten -gt 0 -and $anzahl -gt $maxSeiten) { $anzahl = $maxSeiten }
+        for ($i = 0; $i -lt $anzahl; $i++) {
+            $seite = $null; $mem = $null; $netz = $null
+            try {
+                $seite = $dok.GetPage([uint32]$i)
+                $mem = New-Object Windows.Storage.Streams.InMemoryRandomAccessStream
+                $opt = New-Object Windows.Data.Pdf.PdfPageRenderOptions
+                $opt.DestinationWidth = [uint32]$breitePx
+                Warte-WinRTAktion ($seite.RenderToStreamAsync($mem, $opt))
+                $mem.Seek(0)
+                $netz = [System.IO.WindowsRuntimeStreamExtensions]::AsStreamForRead($mem)
+                $png = Join-Path $ScanTempOrdner ("Seite_" + $kennung + "_" + $i + ".png")
+                $fs = [System.IO.File]::Create($png)
+                try { $netz.CopyTo($fs) } finally { $fs.Close() }
+                $zoll = 8.27
+                try { $b = [double]$seite.Size.Width; if ($b -gt 10) { $zoll = $b / 96.0 } } catch {}
+                [void]$liste.Add([PSCustomObject]@{ Png = $png; Dpi = ($breitePx / $zoll) })
+            } finally {
+                if ($netz) { try { $netz.Dispose() } catch {} }
+                if ($mem) { try { $mem.Dispose() } catch {} }
+                if ($seite) { try { $seite.Dispose() } catch {} }
+            }
+        }
+    } finally {
+        Remove-Item -Path $kopie -Force -ErrorAction SilentlyContinue
+    }
+    return ,$liste
+}
+
+function Entferne-SeitenBilder($seiten) {
+    foreach ($s in @($seiten)) { if ($s -and $s.Png) { Remove-Item -Path $s.Png -Force -ErrorAction SilentlyContinue } }
+}
+
+# Kleines Vorschaubild der ersten Seite (fuer die Suche). Rueckgabe Bitmap oder $null.
+$script:VorschauCache = @{}
+function Hole-Vorschaubild($pdfPfad) {
+    if ($script:VorschauCache.ContainsKey($pdfPfad)) { return $script:VorschauCache[$pdfPfad] }
+    $bild = $null
+    $seiten = $null
+    try {
+        $seiten = Rendere-PdfSeiten $pdfPfad 700 1
+        if ($seiten.Count -gt 0) {
+            $bytes = [System.IO.File]::ReadAllBytes($seiten[0].Png)
+            $ms = New-Object System.IO.MemoryStream(,$bytes)
+            $tmp = [System.Drawing.Image]::FromStream($ms)
+            $bild = New-Object System.Drawing.Bitmap $tmp
+            $tmp.Dispose(); $ms.Dispose()
+        }
+    } catch {
+        $bild = $null
+    } finally {
+        if ($seiten) { Entferne-SeitenBilder $seiten }
+    }
+    if ($script:VorschauCache.Count -gt 40) {
+        $script:VorschauCache.Clear()   # Bilder nicht selbst freigeben - eins koennte gerade angezeigt werden
+    }
+    $script:VorschauCache[$pdfPfad] = $bild
+    return $bild
+}
+
+# Erzeugt eine (durchsuchbare) PDF aus Seitenbildern an einem beliebigen Ort.
+# $seiten: Objekte mit Png + Dpi. Rueckgabe: erkannter Gesamttext.
+function Schreibe-PdfAusSeiten($seiten, $zielPfad, [string]$fortschrittText = "PDF wird erstellt ...") {
+    $jpegs  = New-Object System.Collections.Generic.List[byte[]]
+    $sw     = New-Object System.Collections.Generic.List[bool]
+    $breite = New-Object System.Collections.Generic.List[int]
+    $hoehe  = New-Object System.Collections.Generic.List[int]
+    $dx     = New-Object System.Collections.Generic.List[double]
+    $dy     = New-Object System.Collections.Generic.List[double]
+    $texte  = New-Object System.Collections.Generic.List[string]
+    $gesamt = New-Object System.Text.StringBuilder
+    $mitOcr = Initialisiere-Ocr
+    $nr = 0
+    $anzahl = @($seiten).Count
+    foreach ($s in $seiten) {
+        $nr++
+        Zeige-Fortschritt $fortschrittText "Seite $nr von $anzahl$(if ($mitOcr) { ' (mit Texterkennung)' })"
+        $seite = [PpeBild]::LadeAlsJpeg($s.Png, [long]$PdfBildQualitaet)
+        $x = [double]$s.Dpi
+        if ($x -lt 50 -or $x -gt 2400) { $x = $seite.Breite / $script:A4_BREITE_ZOLL }
+        [void]$jpegs.Add($seite.Jpeg); [void]$sw.Add([bool]$seite.Schwarzweiss)
+        [void]$breite.Add($seite.Breite); [void]$hoehe.Add($seite.Hoehe)
+        [void]$dx.Add($x); [void]$dy.Add($x)
+        $ebene = $null
+        if ($mitOcr) {
+            $erkannt = Erkenne-Text $s.Png
+            if ($erkannt -and $erkannt.Woerter.Count -gt 0) {
+                try { $ebene = [PpePdf]::TextEbene([string[]]$erkannt.Woerter, [double[]]$erkannt.X, [double[]]$erkannt.Y, [double[]]$erkannt.W, [double[]]$erkannt.H, $x, $x, [int]$seite.Hoehe) } catch {}
+                [void]$gesamt.AppendLine($erkannt.Text)
+            }
+        }
+        [void]$texte.Add($ebene)
+    }
+    $tempPdf = Join-Path $ScanTempOrdner ("Zusammen_" + [guid]::NewGuid().ToString("N") + ".pdf")
+    [PpePdf]::Schreibe($tempPdf, $jpegs.ToArray(), $breite.ToArray(), $hoehe.ToArray(), $dx.ToArray(), $dy.ToArray(), $sw.ToArray(), $texte.ToArray())
+    try { Move-Item -Path $tempPdf -Destination $zielPfad -ErrorAction Stop }
+    catch { Copy-Item -Path $tempPdf -Destination $zielPfad -Force -ErrorAction Stop; Remove-Item -Path $tempPdf -Force -ErrorAction SilentlyContinue }
+    return $gesamt.ToString()
+}
+
+# ======================= SUCHINDEX: VERSCHIEBEN / UMBENENNEN =======================
+# Holt den letzten Suchindex-Eintrag zu einer Datei (eigener PC + Shop-Kopien)
+function Hole-IndexEintrag($pfad) {
+    $treffer = $null
+    $dateien = New-Object System.Collections.Generic.List[string]
+    if (Test-Path $script:SuchindexDatei) { [void]$dateien.Add($script:SuchindexDatei) }
+    $alt = Join-Path $script:DatenOrdner "Suchindex_Altbestand.jsonl"
+    if (Test-Path $alt) { [void]$dateien.Add($alt) }
+    try {
+        if ($StatusOrdner -and $StatusOrdner -ne "-") {
+            foreach ($f in @(Get-ChildItem -Path (Join-Path $StatusOrdner "Suchindex") -Filter "*.jsonl" -File -ErrorAction SilentlyContinue)) { [void]$dateien.Add($f.FullName) }
+        }
+    } catch {}
+    $suche = ($pfad | ConvertTo-Json -Compress)   # so steht der Pfad im JSON
+    foreach ($d in $dateien) {
+        try {
+            foreach ($z in [System.IO.File]::ReadAllLines($d, [System.Text.Encoding]::UTF8)) {
+                if ($z.IndexOf($suche, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) { continue }
+                try { $e = $z | ConvertFrom-Json } catch { continue }
+                if ([string]$e.Pfad -ieq $pfad) { $treffer = $e }
+            }
+        } catch {}
+    }
+    return $treffer
+}
+
+# Vermerkt im Suchindex, dass eine Datei verschoben/umbenannt wurde
+function Merke-Verschiebung($altPfad, $neuPfad, $ziel, $mitarbeiter, $bezeichnung) {
+    try {
+        $alt = Hole-IndexEintrag $altPfad
+        $eintrag = [ordered]@{
+            Zeit        = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+            Datum       = $(if ($alt -and $alt.Datum) { [string]$alt.Datum } else { (Get-Item $neuPfad -ErrorAction SilentlyContinue).LastWriteTime.ToString("yyyy-MM-dd") })
+            Ziel        = $ziel
+            Mitarbeiter = "$mitarbeiter"
+            Bezeichnung = $bezeichnung
+            Pfad        = $neuPfad
+            PC          = $env:COMPUTERNAME
+            Text        = $(if ($alt) { [string]$alt.Text } else { "" })
+            Alt         = $altPfad
+        }
+        $zeile = ($eintrag | ConvertTo-Json -Compress -Depth 2)
+        [System.IO.File]::AppendAllText($script:SuchindexDatei, $zeile + "`r`n", (New-Object System.Text.UTF8Encoding($false)))
+        Kopiere-SuchindexInShop
+    } catch {
+        Schreibe-Log "HINWEIS: Verschiebung konnte nicht im Suchverzeichnis vermerkt werden: $($_.Exception.Message)"
+    }
+}
+
+# Zielordner fuer "Verschieben nach": Mitarbeiter (Name), "Shop" oder "Kasse"
+function Ermittle-VerschiebeZiel($art, $mitarbeiter, $datum) {
+    switch ($art) {
+        "Mitarbeiter" {
+            $o = [string]$MitarbeiterOrdner[$mitarbeiter]
+            if (-not $o) { throw "Fuer '$mitarbeiter' ist kein Ordner hinterlegt." }
+            return (Join-Path $ZielBasis $o)
+        }
+        "Shop"  { return $ShopOrdner }
+        "Kasse" {
+            $d = Get-Date
+            try { $d = [DateTime]::ParseExact([string]$datum, "yyyy-MM-dd", $null) } catch {}
+            return (Ermittle-KassenMonatsordner $KassenOrdner $d)
+        }
+    }
+    throw "Unbekanntes Ziel '$art'"
+}
+
+# Verschiebt/benennt eine abgelegte Datei um. Rueckgabe: neuer Pfad.
+function Verschiebe-Dokument($pfad, $zielOrdner, $neuerName, $ziel, $mitarbeiter) {
+    if (-not (Test-Path $pfad)) { throw "Die Datei ist nicht (mehr) erreichbar:`n$pfad" }
+    if (-not (Test-Path $zielOrdner -ErrorAction SilentlyContinue)) { New-Item -ItemType Directory -Path $zielOrdner -Force -ErrorAction Stop | Out-Null }
+    $basis = Sanitize-Dateiname ([System.IO.Path]::GetFileNameWithoutExtension($neuerName))
+    if (-not $basis) { throw "Der Dateiname darf nicht leer sein." }
+    $neu = Join-Path $zielOrdner "$basis.pdf"
+    if ($neu -ine $pfad) {
+        if (Test-Path $neu) { $neu = Get-EindeutigerZielpfad $zielOrdner $basis "pdf" }
+        Move-Item -Path $pfad -Destination $neu -ErrorAction Stop
+    }
+    $bez = $basis -replace '^\d{4}-\d{2}-\d{2}_', ''
+    Merke-Verschiebung $pfad $neu $ziel $mitarbeiter $bez
+    Schreibe-Log "Dokument verschoben/umbenannt: $pfad -> $neu"
+    return $neu
+}
+
+# Kleines Eingabefenster (Text). Rueckgabe: Text oder $null bei Abbruch.
+function Frage-Text($titel, $frage, $vorgabe) {
+    $f = New-Object System.Windows.Forms.Form
+    $f.Add_Load({ Setze-Design $this })
+    $f.Text = $titel
+    $f.FormBorderStyle = "FixedDialog"
+    $f.MaximizeBox = $false; $f.MinimizeBox = $false
+    $f.StartPosition = "CenterParent"
+    $f.ClientSize = New-Object System.Drawing.Size(460, 120)
+    $l = New-Object System.Windows.Forms.Label
+    $l.Text = $frage; $l.UseMnemonic = $false
+    $l.Location = New-Object System.Drawing.Point(12, 12); $l.Size = New-Object System.Drawing.Size(436, 20)
+    $f.Controls.Add($l)
+    $t = New-Object System.Windows.Forms.TextBox
+    $t.Location = New-Object System.Drawing.Point(12, 36); $t.Width = 436
+    $t.Text = $vorgabe
+    $f.Controls.Add($t)
+    $ok = New-Object System.Windows.Forms.Button
+    $ok.Text = "OK"; $ok.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    $ok.Location = New-Object System.Drawing.Point(252, 76); $ok.Size = New-Object System.Drawing.Size(95, 30)
+    $f.Controls.Add($ok); $f.AcceptButton = $ok
+    $ab = New-Object System.Windows.Forms.Button
+    $ab.Text = "Abbrechen"; $ab.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+    $ab.Location = New-Object System.Drawing.Point(353, 76); $ab.Size = New-Object System.Drawing.Size(95, 30)
+    $f.Controls.Add($ab); $f.CancelButton = $ab
+    $f.Add_Shown({ $t.SelectAll(); $t.Focus() })
+    $r = $f.ShowDialog()
+    $wert = $t.Text
+    $f.Dispose()
+    if ($r -ne [System.Windows.Forms.DialogResult]::OK) { return $null }
+    return $wert
+}
+
+# ======================= ALTBESTAND DURCHSUCHBAR MACHEN =======================
+# Ein eigener Hintergrund-Prozess (niedrige Prioritaet) liest vorhandene PDFs
+# im Shop-Ordner und in den Ordnern der hinterlegten Mitarbeiter, erkennt den
+# Text der ersten Seiten und traegt sie ins Suchverzeichnis ein. So findet die
+# Suche auch Dokumente, die vor Version 23 oder ohne Watcher abgelegt wurden.
+# Technisch: Kopie dieser Datei als "DiNo1-Indexierung.ps1" - erkennt sich am
+# Dateinamen und arbeitet dann nur die Liste ab (kein Tray-Symbol).
+$script:AltbestandIndex   = Join-Path $script:DatenOrdner "Suchindex_Altbestand.jsonl"
+$script:IndexierSkript    = Join-Path $script:DatenOrdner "DiNo1-Indexierung.ps1"
+$script:IndexMutexName    = "Local\DiNo1DruckScanIndexierung"
+$script:IndexSeiten       = 3          # so viele Seiten je PDF werden gelesen
+$script:IndexLetzterStart = [DateTime]::MinValue
+
+function Starte-AltbestandIndexierung {
+    try {
+        $laeuft = $false
+        try { $m = [System.Threading.Mutex]::OpenExisting($script:IndexMutexName); $m.Dispose(); $laeuft = $true } catch {}
+        if ($laeuft) { return }
+        if (-not $OcrAktiv) { return }
+        Copy-Item -Path $script:EigenerPfad -Destination $script:IndexierSkript -Force -ErrorAction Stop
+        Start-Process -FilePath "conhost.exe" -ArgumentList ("--headless powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"" + $script:IndexierSkript + "`"")
+        $script:IndexLetzterStart = Get-Date
+    } catch {
+        Schreibe-Log "HINWEIS: Altbestand-Indexierung konnte nicht gestartet werden: $($_.Exception.Message)"
+    }
+}
+
+function Kopiere-AltbestandInShop {
+    try {
+        if (-not (Test-Path $script:AltbestandIndex)) { return }
+        if ([string]::IsNullOrWhiteSpace($StatusOrdner) -or $StatusOrdner.Trim() -eq "-" -or -not (Test-Path $StatusOrdner -ErrorAction SilentlyContinue)) { return }
+        $ordner = Join-Path $StatusOrdner "Suchindex"
+        if (-not (Test-Path $ordner)) { New-Item -ItemType Directory -Path $ordner -Force | Out-Null }
+        $ziel = Join-Path $ordner ("Altbestand_" + (Get-PcKennung) + ".jsonl")
+        try { Copy-Item -Path $script:AltbestandIndex -Destination $ziel -Force -ErrorAction Stop }
+        catch { Remove-Item -Path $ziel -Force -ErrorAction SilentlyContinue; Copy-Item -Path $script:AltbestandIndex -Destination $ziel -Force -ErrorAction Stop }
+    } catch {}
+}
+
+# Alle Pfade, die schon in irgendeinem Suchverzeichnis stehen
+function Lese-BekanntePfade {
+    $set = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::OrdinalIgnoreCase)
+    $dateien = New-Object System.Collections.Generic.List[string]
+    foreach ($d in @($script:SuchindexDatei, $script:AltbestandIndex)) { if (Test-Path $d) { [void]$dateien.Add($d) } }
+    try {
+        if ($StatusOrdner -and $StatusOrdner -ne "-") {
+            foreach ($f in @(Get-ChildItem -Path (Join-Path $StatusOrdner "Suchindex") -Filter "*.jsonl" -File -ErrorAction SilentlyContinue)) { [void]$dateien.Add($f.FullName) }
+        }
+    } catch {}
+    foreach ($d in $dateien) {
+        try {
+            foreach ($z in [System.IO.File]::ReadAllLines($d, [System.Text.Encoding]::UTF8)) {
+                $m = [regex]::Match($z, '"Pfad":"((?:[^"\\]|\\.)*)"')
+                if ($m.Success) { try { [void]$set.Add(('"' + $m.Groups[1].Value + '"' | ConvertFrom-Json)) } catch {} }
+            }
+        } catch {}
+    }
+    return ,$set
+}
+
+# Laeuft im Indexier-Prozess
+function Fuehre-AltbestandIndexierungAus {
+    try { (Get-Process -Id $PID).PriorityClass = [System.Diagnostics.ProcessPriorityClass]::Idle } catch {}
+    Schreibe-Log "Indexierung Altbestand: gestartet."
+    $statusPfad = if ($StatusOrdner -and $StatusOrdner -ne "-") { $StatusOrdner.TrimEnd('\') } else { "" }
+    # Mitarbeiter-Ordner -> Name (fuer die Anzeige "Mitarbeiter: ...")
+    $ordnerZuName = @{}
+    foreach ($k in @($MitarbeiterOrdner.Keys)) { $ordnerZuName[(Join-Path $ZielBasis ([string]$MitarbeiterOrdner[$k])).TrimEnd('\').ToLowerInvariant()] = $k }
+
+    $bekannt = Lese-BekanntePfade
+    $neu = 0; $fehler = 0; $seitLetzterKopie = 0
+    foreach ($wurzel in (Get-SuchOrdner)) {
+        if (-not (Test-Path $wurzel -ErrorAction SilentlyContinue)) { continue }
+        $mitarbeiter = ""
+        $ziel = "Shop"
+        if ($ordnerZuName.ContainsKey($wurzel.ToLowerInvariant())) { $ziel = "Mitarbeiter"; $mitarbeiter = $ordnerZuName[$wurzel.ToLowerInvariant()] }
+        $stapel = New-Object System.Collections.Generic.Stack[string]
+        $stapel.Push($wurzel)
+        while ($stapel.Count -gt 0) {
+            $dir = $stapel.Pop()
+            try {
+                foreach ($u in [System.IO.Directory]::GetDirectories($dir)) {
+                    if ($statusPfad -and $u.Equals($statusPfad, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+                    $stapel.Push($u)
+                }
+            } catch {}
+            $dateien = @()
+            try { $dateien = [System.IO.Directory]::GetFiles($dir, "*.pdf") } catch {}
+            foreach ($f in $dateien) {
+                if ($bekannt.Contains($f)) { continue }
+                [void]$bekannt.Add($f)
+                $text = ""
+                $seiten = $null
+                try {
+                    $seiten = Rendere-PdfSeiten $f 1240 $script:IndexSeiten
+                    $sb = New-Object System.Text.StringBuilder
+                    foreach ($s in $seiten) {
+                        $erkannt = Erkenne-Text $s.Png
+                        if ($erkannt) { [void]$sb.AppendLine($erkannt.Text) }
+                    }
+                    $text = $sb.ToString()
+                } catch {
+                    $fehler++
+                } finally {
+                    if ($seiten) { Entferne-SeitenBilder $seiten }
+                }
+                if ($text.Length -gt 30000) { $text = $text.Substring(0, 30000) }
+                $datum = ""
+                try { $datum = [System.IO.File]::GetLastWriteTime($f).ToString("yyyy-MM-dd") } catch {}
+                $name = [System.IO.Path]::GetFileNameWithoutExtension($f)
+                if ($name -match '^(\d{4}-\d{2}-\d{2})_(.*)$') { $datum = $matches[1]; $name = $matches[2] }
+                $eintrag = [ordered]@{
+                    Zeit = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'); Datum = $datum; Ziel = $ziel
+                    Mitarbeiter = $mitarbeiter; Bezeichnung = $name; Pfad = $f; PC = $env:COMPUTERNAME
+                    Text = $text; Quelle = "Altbestand"
+                }
+                try { [System.IO.File]::AppendAllText($script:AltbestandIndex, (($eintrag | ConvertTo-Json -Compress -Depth 2) + "`r`n"), (New-Object System.Text.UTF8Encoding($false))) } catch {}
+                $neu++; $seitLetzterKopie++
+                if ($seitLetzterKopie -ge 20) {
+                    Kopiere-AltbestandInShop; $seitLetzterKopie = 0
+                    # Was andere PCs inzwischen erledigt haben, nicht doppelt machen
+                    foreach ($p in (Lese-BekanntePfade)) { [void]$bekannt.Add($p) }
+                }
+                Start-Sleep -Milliseconds 200
+            }
+        }
+    }
+    Kopiere-AltbestandInShop
+    Schreibe-Log "Indexierung Altbestand: fertig - $neu Dokument(e) neu aufgenommen$(if ($fehler) { ", $fehler nicht lesbar" })."
+}
+
+# ======================= PDFs ZUSAMMENFUEGEN =======================
+# 1. Von Hand: Fenster "PDFs zusammenfuegen" - Dateien hineinziehen (Drag &
+#    Drop aus dem Explorer oder aus der Suche), Reihenfolge per Ziehen
+#    aendern, "Zusammenfuegen". Die Seiten werden neu aufgebaut (als Bild mit
+#    Texterkennung, also wieder durchsuchbar).
+# 2. Automatisch: Werden Dokumente wie "Thomas Meier 1", "Thomas Meier 2"
+#    (auch "Thomas Meier zwei", "... Teil 3") am selben Tag in denselben Ordner
+#    abgelegt, entsteht ca. 2 Minuten nach dem letzten Teil daraus
+#    "Thomas Meier.pdf"; die Einzelteile wandern in den Unterordner
+#    "Einzelteile". Voraussetzung: Teil 1 ist dabei.
+$script:AutoZusammenfuegen = $true
+$script:EinzelteileOrdnerName = "Einzelteile"
+$script:ZusammenKandidaten = @{}
+$script:ZahlWoerter = @{ "eins" = 1; "ein" = 1; "zwei" = 2; "drei" = 3; "vier" = 4; "fuenf" = 5; "sechs" = 6; "sieben" = 7; "acht" = 8; "neun" = 9; "zehn" = 10 }
+$script:ZahlWoerter[("f" + [char]0x00FC + "nf")] = 5
+
+# Zerlegt "2026-11-12_Thomas Meier 2" in Schluessel (Datum+Name) und Nummer - oder $null
+function Zerlege-TeilName($basisname) {
+    $m = [regex]::Match($basisname, '^(?<datum>\d{4}-\d{2}-\d{2}_)?(?<name>.+?)[\s_\-]+(?:teil[\s_\-]*)?(?<nr>\d{1,2}|[a-z' + [char]0x00FC + ']+)$', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    if (-not $m.Success) { return $null }
+    $nrText = $m.Groups["nr"].Value.ToLowerInvariant()
+    $nr = 0
+    if ($nrText -match '^\d+$') { $nr = [int]$nrText } elseif ($script:ZahlWoerter.ContainsKey($nrText)) { $nr = $script:ZahlWoerter[$nrText] } else { return $null }
+    if ($nr -lt 1) { return $null }
+    $name = $m.Groups["name"].Value.Trim()
+    if (-not $name) { return $null }
+    return [PSCustomObject]@{ Datum = $m.Groups["datum"].Value; Name = $name; Nr = $nr; Schluessel = ($m.Groups["datum"].Value + $name).ToLowerInvariant() }
+}
+
+# Wo liegt eine Datei? -> Ziel (Mitarbeiter/Shop/Kasse/Lokal) + Mitarbeitername
+function Ermittle-AblageFuerPfad($pfad) {
+    $p = "$pfad".ToLowerInvariant()
+    foreach ($k in @($MitarbeiterOrdner.Keys)) {
+        $o = (Join-Path $ZielBasis ([string]$MitarbeiterOrdner[$k])).TrimEnd('\').ToLowerInvariant() + "\"
+        if ($p.StartsWith($o)) { return @{ Ziel = "Mitarbeiter"; Mitarbeiter = $k } }
+    }
+    if ($ShopOrdner -and $p.StartsWith($ShopOrdner.TrimEnd('\').ToLowerInvariant() + "\")) { return @{ Ziel = "Shop"; Mitarbeiter = "" } }
+    if ($KassenOrdner -and $p.StartsWith((Split-Path $KassenOrdner -Parent).TrimEnd('\').ToLowerInvariant() + "\")) { return @{ Ziel = "Kasse"; Mitarbeiter = "" } }
+    return @{ Ziel = "Lokal"; Mitarbeiter = "" }
+}
+
+function Merke-NeuesDokument($pfad, $text, $datum, $bezeichnung) {
+    try {
+        $abl = Ermittle-AblageFuerPfad $pfad
+        $t = "$text"; if ($t.Length -gt 30000) { $t = $t.Substring(0, 30000) }
+        $eintrag = [ordered]@{
+            Zeit = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'); Datum = $datum; Ziel = $abl.Ziel
+            Mitarbeiter = $abl.Mitarbeiter; Bezeichnung = $bezeichnung; Pfad = $pfad; PC = $env:COMPUTERNAME
+            Text = $t; Quelle = "Zusammengefuegt"
+        }
+        [System.IO.File]::AppendAllText($script:SuchindexDatei, (($eintrag | ConvertTo-Json -Compress -Depth 2) + "`r`n"), (New-Object System.Text.UTF8Encoding($false)))
+        Kopiere-SuchindexInShop
+    } catch {}
+}
+
+# Fuegt PDFs zusammen. Rueckgabe: Pfad der neuen Datei.
+function Fuege-PdfsZusammen($dateien, $zielPfad, [bool]$einzelteileWegraeumen) {
+    $alleSeiten = New-Object System.Collections.Generic.List[object]
+    try {
+        $nr = 0
+        foreach ($d in $dateien) {
+            $nr++
+            Zeige-Fortschritt "PDFs werden zusammengefuegt ..." "Lese Datei $nr von $(@($dateien).Count): $([System.IO.Path]::GetFileName($d))"
+            foreach ($s in (Rendere-PdfSeiten $d 1654 0)) { [void]$alleSeiten.Add($s) }
+        }
+        if ($alleSeiten.Count -eq 0) { throw "Die Dateien enthalten keine Seiten." }
+        $temp = Join-Path $ScanTempOrdner ("Zusammen_" + [guid]::NewGuid().ToString("N") + ".pdf")
+        $text = Schreibe-PdfAusSeiten $alleSeiten $temp "PDFs werden zusammengefuegt ..."
+        # Einzelteile wegraeumen (vorher, damit der Zielname frei wird, falls er einem Teil entspricht)
+        if ($einzelteileWegraeumen) {
+            foreach ($d in $dateien) {
+                if (-not (Test-Path $d)) { continue }
+                $ordner = Split-Path $d -Parent
+                if ((Split-Path $ordner -Leaf) -ieq $script:EinzelteileOrdnerName) { continue }   # liegt schon dort
+                $teileOrdner = Join-Path $ordner $script:EinzelteileOrdnerName
+                if (-not (Test-Path $teileOrdner)) { New-Item -ItemType Directory -Path $teileOrdner -Force | Out-Null }
+                $neu = Get-EindeutigerZielpfad $teileOrdner ([System.IO.Path]::GetFileNameWithoutExtension($d)) "pdf"
+                Move-Item -Path $d -Destination $neu -ErrorAction Stop
+                $abl = Ermittle-AblageFuerPfad $d
+                Merke-Verschiebung $d $neu $abl.Ziel $abl.Mitarbeiter ([System.IO.Path]::GetFileNameWithoutExtension($d) -replace '^\d{4}-\d{2}-\d{2}_', '')
+            }
+        }
+        if (Test-Path $zielPfad) { Remove-Item -Path $zielPfad -Force -ErrorAction Stop }   # wird neu aufgebaut
+        try { Move-Item -Path $temp -Destination $zielPfad -ErrorAction Stop }
+        catch { Copy-Item -Path $temp -Destination $zielPfad -Force -ErrorAction Stop; Remove-Item -Path $temp -Force -ErrorAction SilentlyContinue }
+        $basis = [System.IO.Path]::GetFileNameWithoutExtension($zielPfad)
+        $datum = if ($basis -match '^(\d{4}-\d{2}-\d{2})_') { $matches[1] } else { (Get-Date -Format 'yyyy-MM-dd') }
+        Merke-NeuesDokument $zielPfad $text $datum ($basis -replace '^\d{4}-\d{2}-\d{2}_', '')
+        Schreibe-Log "PDFs zusammengefuegt ($(@($dateien).Count) Dateien, $($alleSeiten.Count) Seiten): $zielPfad"
+        return $zielPfad
+    } finally {
+        Entferne-SeitenBilder $alleSeiten
+        Schliesse-Fortschritt
+    }
+}
+
+# Nach jeder Ablage: merken, ob die Datei ein "Teil" ist (wird spaeter geprueft)
+function Merke-ZusammenKandidat($zielpfad) {
+    if (-not $script:AutoZusammenfuegen) { return }
+    $t = Zerlege-TeilName ([System.IO.Path]::GetFileNameWithoutExtension($zielpfad))
+    if (-not $t) { return }
+    $ordner = Split-Path $zielpfad -Parent
+    $script:ZusammenKandidaten[($ordner + "|" + $t.Schluessel)] = @{ Ordner = $ordner; Schluessel = $t.Schluessel; Zeit = (Get-Date) }
+}
+
+# Jede Minute: Gruppen, bei denen seit 2 Minuten kein Teil dazukam, zusammenfuegen
+function Pruefe-AutoZusammenfuegen {
+    if ($script:ZusammenKandidaten.Count -eq 0) { return }
+    foreach ($k in @($script:ZusammenKandidaten.Keys)) {
+        $c = $script:ZusammenKandidaten[$k]
+        if (((Get-Date) - $c.Zeit).TotalMinutes -lt 2) { continue }
+        $script:ZusammenKandidaten.Remove($k)
+        try {
+            $teile = New-Object System.Collections.Generic.List[object]
+            $teileOrdner = Join-Path $c.Ordner $script:EinzelteileOrdnerName
+            foreach ($o in @($c.Ordner, $teileOrdner)) {
+                foreach ($f in @(Get-ChildItem -Path $o -Filter "*.pdf" -File -ErrorAction SilentlyContinue)) {
+                    $t = Zerlege-TeilName $f.BaseName
+                    if ($t -and $t.Schluessel -eq $c.Schluessel) { [void]$teile.Add([PSCustomObject]@{ Pfad = $f.FullName; Nr = $t.Nr; Info = $t }) }
+                }
+            }
+            # doppelte Nummern (Teil schon in Einzelteile UND neu abgelegt): den im Ablageordner nehmen
+            $jeNr = @{}
+            foreach ($t in $teile) {
+                if (-not $jeNr.ContainsKey($t.Nr) -or (Split-Path (Split-Path $t.Pfad -Parent) -Leaf) -ine $script:EinzelteileOrdnerName) { $jeNr[$t.Nr] = $t }
+            }
+            if ($jeNr.Count -lt 2 -or -not $jeNr.ContainsKey(1)) { continue }
+            $sortiert = @($jeNr.Keys | Sort-Object | ForEach-Object { $jeNr[$_].Pfad })
+            $erstes = $jeNr[1].Info
+            $ziel = Join-Path $c.Ordner ((Sanitize-Dateiname ($erstes.Datum + $erstes.Name)) + ".pdf")
+            Fuege-PdfsZusammen $sortiert $ziel $true | Out-Null
+            $trayIcon.ShowBalloonTip(8000, "DiNo1 Druck & Scan", "$($jeNr.Count) Teile zu '$([System.IO.Path]::GetFileName($ziel))' zusammengefuegt.", [System.Windows.Forms.ToolTipIcon]::Info)
+        } catch {
+            Schreibe-Log "FEHLER beim automatischen Zusammenfuegen ($($c.Schluessel)): $($_.Exception.Message)"
+        }
+    }
+}
+
+# Fenster zum Zusammenfuegen von Hand
+function Zeige-Zusammenfuegen($startDateien) {
+    $script:ZfPfade = New-Object System.Collections.Generic.List[string]
+    foreach ($d in @($startDateien)) { if ($d -and -not $script:ZfPfade.Contains($d)) { [void]$script:ZfPfade.Add($d) } }
+    $script:ZfZiehIndex = -1
+    $script:ZfZiehStart = [System.Drawing.Point]::Empty
+
+    $form = New-Object System.Windows.Forms.Form
+    $form.Add_Load({ Setze-Design $this })
+    $form.Text = "PDFs zusammenfuegen - DiNo1 Druck & Scan"
+    $form.ClientSize = New-Object System.Drawing.Size(640, 520)
+    $form.StartPosition = "CenterScreen"
+    $form.FormBorderStyle = "FixedDialog"
+    $form.MaximizeBox = $false
+
+    $hinweis = New-Object System.Windows.Forms.Label
+    $hinweis.Text = "PDFs hier hineinziehen (aus dem Explorer). Reihenfolge per Ziehen in der Liste aendern oder mit den Knoepfen rechts."
+    $hinweis.Location = New-Object System.Drawing.Point(15, 12); $hinweis.Size = New-Object System.Drawing.Size(610, 20)
+    $form.Controls.Add($hinweis)
+
+    $lst = New-Object System.Windows.Forms.ListBox
+    $lst.Location = New-Object System.Drawing.Point(15, 38); $lst.Size = New-Object System.Drawing.Size(480, 300)
+    $lst.Font = New-Object System.Drawing.Font("Segoe UI", 9.5)
+    $lst.IntegralHeight = $false
+    $lst.AllowDrop = $true
+    $form.Controls.Add($lst)
+
+    $txtName = New-Object System.Windows.Forms.TextBox
+    $lblZiel = New-Object System.Windows.Forms.Label
+
+    $aktualisiere = {
+        $sel = $lst.SelectedIndex
+        $lst.BeginUpdate(); $lst.Items.Clear()
+        for ($i = 0; $i -lt $script:ZfPfade.Count; $i++) {
+            $p = $script:ZfPfade[$i]
+            [void]$lst.Items.Add(("{0}.  {1}      ({2})" -f ($i + 1), [System.IO.Path]::GetFileName($p), (Split-Path (Split-Path $p -Parent) -Leaf)))
+        }
+        $lst.EndUpdate()
+        if ($sel -ge 0 -and $sel -lt $lst.Items.Count) { $lst.SelectedIndex = $sel }
+        if ($script:ZfPfade.Count -gt 0) {
+            if (-not $txtName.Text) {
+                $b = [System.IO.Path]::GetFileNameWithoutExtension($script:ZfPfade[0])
+                $t = Zerlege-TeilName $b
+                $txtName.Text = $(if ($t) { $t.Datum + $t.Name } else { $b + " (zusammengefuegt)" })
+            }
+            if (-not $lblZiel.Tag) { $lblZiel.Tag = Split-Path $script:ZfPfade[0] -Parent }
+        }
+        $lblZiel.Text = "Speichern in:  $($lblZiel.Tag)"
+    }
+
+    $fuegeHinzu = {
+        param($liste)
+        foreach ($f in @($liste)) {
+            if ([System.IO.Path]::GetExtension($f) -ieq ".pdf" -and -not $script:ZfPfade.Contains($f)) { [void]$script:ZfPfade.Add($f) }
+        }
+        & $aktualisiere
+    }
+
+    $lst.Add_DragEnter({
+        param($s, $e)
+        if ($e.Data.GetDataPresent([System.Windows.Forms.DataFormats]::FileDrop)) { $e.Effect = [System.Windows.Forms.DragDropEffects]::Copy }
+        elseif ($e.Data.GetDataPresent([System.Windows.Forms.DataFormats]::Text)) { $e.Effect = [System.Windows.Forms.DragDropEffects]::Move }
+    })
+    $lst.Add_DragOver({
+        param($s, $e)
+        if ($e.Data.GetDataPresent([System.Windows.Forms.DataFormats]::FileDrop)) { $e.Effect = [System.Windows.Forms.DragDropEffects]::Copy }
+        elseif ($e.Data.GetDataPresent([System.Windows.Forms.DataFormats]::Text)) { $e.Effect = [System.Windows.Forms.DragDropEffects]::Move }
+    })
+    $lst.Add_DragDrop({
+        param($s, $e)
+        if ($e.Data.GetDataPresent([System.Windows.Forms.DataFormats]::FileDrop)) {
+            & $fuegeHinzu ([string[]]$e.Data.GetData([System.Windows.Forms.DataFormats]::FileDrop))
+            return
+        }
+        $t = [string]$e.Data.GetData([System.Windows.Forms.DataFormats]::Text)
+        if ($t -notmatch '^DINO1IDX:(\d+)$') { return }
+        $von = [int]$matches[1]
+        $nach = $lst.IndexFromPoint($lst.PointToClient((New-Object System.Drawing.Point($e.X, $e.Y))))
+        if ($nach -lt 0) { $nach = $script:ZfPfade.Count - 1 }
+        if ($von -eq $nach -or $von -lt 0 -or $von -ge $script:ZfPfade.Count) { return }
+        $p = $script:ZfPfade[$von]; $script:ZfPfade.RemoveAt($von); $script:ZfPfade.Insert($nach, $p)
+        & $aktualisiere
+        $lst.SelectedIndex = $nach
+    })
+    $lst.Add_MouseDown({
+        param($s, $e)
+        $script:ZfZiehIndex = $lst.IndexFromPoint($e.Location)
+        $script:ZfZiehStart = $e.Location
+    })
+    $lst.Add_MouseUp({ $script:ZfZiehIndex = -1 })
+    $lst.Add_MouseMove({
+        param($s, $e)
+        if ($e.Button -ne [System.Windows.Forms.MouseButtons]::Left -or $script:ZfZiehIndex -lt 0) { return }
+        $g = [System.Windows.Forms.SystemInformation]::DragSize
+        if ([Math]::Abs($e.X - $script:ZfZiehStart.X) -lt $g.Width -and [Math]::Abs($e.Y - $script:ZfZiehStart.Y) -lt $g.Height) { return }
+        $i = $script:ZfZiehIndex; $script:ZfZiehIndex = -1
+        [void]$lst.DoDragDrop("DINO1IDX:$i", [System.Windows.Forms.DragDropEffects]::Move)
+    })
+
+    $knopf = {
+        param($text, $y, $aktion)
+        $b = New-Object System.Windows.Forms.Button
+        $b.Text = $text
+        $b.Location = New-Object System.Drawing.Point(505, $y); $b.Size = New-Object System.Drawing.Size(120, 30)
+        $b.Add_Click($aktion)
+        $form.Controls.Add($b)
+    }
+    & $knopf "Hinzufuegen..." 38 {
+        $dlg = New-Object System.Windows.Forms.OpenFileDialog
+        $dlg.Filter = "PDF-Dateien (*.pdf)|*.pdf"; $dlg.Multiselect = $true
+        if ($lblZiel.Tag -and (Test-Path $lblZiel.Tag)) { $dlg.InitialDirectory = $lblZiel.Tag }
+        if ($dlg.ShowDialog($form) -eq [System.Windows.Forms.DialogResult]::OK) { & $fuegeHinzu $dlg.FileNames }
+    }
+    & $knopf "Nach oben" 78 {
+        $i = $lst.SelectedIndex
+        if ($i -gt 0) { $p = $script:ZfPfade[$i]; $script:ZfPfade.RemoveAt($i); $script:ZfPfade.Insert($i - 1, $p); & $aktualisiere; $lst.SelectedIndex = $i - 1 }
+    }
+    & $knopf "Nach unten" 114 {
+        $i = $lst.SelectedIndex
+        if ($i -ge 0 -and $i -lt $script:ZfPfade.Count - 1) { $p = $script:ZfPfade[$i]; $script:ZfPfade.RemoveAt($i); $script:ZfPfade.Insert($i + 1, $p); & $aktualisiere; $lst.SelectedIndex = $i + 1 }
+    }
+    & $knopf "Entfernen" 150 {
+        $i = $lst.SelectedIndex
+        if ($i -ge 0) { $script:ZfPfade.RemoveAt($i); & $aktualisiere }
+    }
+    & $knopf "Ansehen" 186 {
+        $i = $lst.SelectedIndex
+        if ($i -ge 0 -and (Test-Path $script:ZfPfade[$i])) { Start-Process -FilePath $script:ZfPfade[$i] }
+    }
+
+    $lblName = New-Object System.Windows.Forms.Label
+    $lblName.Text = "Name der neuen Datei:"
+    $lblName.Location = New-Object System.Drawing.Point(15, 352); $lblName.AutoSize = $true
+    $form.Controls.Add($lblName)
+    $txtName.Location = New-Object System.Drawing.Point(160, 349); $txtName.Width = 465
+    $form.Controls.Add($txtName)
+
+    $lblZiel.Location = New-Object System.Drawing.Point(15, 384); $lblZiel.Size = New-Object System.Drawing.Size(480, 20)
+    $lblZiel.AutoEllipsis = $true; $lblZiel.UseMnemonic = $false
+    $form.Controls.Add($lblZiel)
+    & $knopf "Ordner..." 378 {
+        $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
+        if ($lblZiel.Tag -and (Test-Path $lblZiel.Tag)) { $dlg.SelectedPath = $lblZiel.Tag }
+        if ($dlg.ShowDialog($form) -eq [System.Windows.Forms.DialogResult]::OK) { $lblZiel.Tag = $dlg.SelectedPath; & $aktualisiere }
+    }
+
+    $chkWeg = New-Object System.Windows.Forms.CheckBox
+    $chkWeg.Text = "Einzeldateien danach in den Unterordner '$($script:EinzelteileOrdnerName)' verschieben"
+    $chkWeg.Checked = $true
+    $chkWeg.Location = New-Object System.Drawing.Point(15, 414); $chkWeg.AutoSize = $true
+    $form.Controls.Add($chkWeg)
+
+    $btnLos = New-Object System.Windows.Forms.Button
+    $btnLos.Text = "Zusammenfuegen"
+    $btnLos.Location = New-Object System.Drawing.Point(375, 470); $btnLos.Size = New-Object System.Drawing.Size(130, 34)
+    $form.Controls.Add($btnLos)
+    $form.AcceptButton = $btnLos
+    $btnZu = New-Object System.Windows.Forms.Button
+    $btnZu.Text = "Schliessen"
+    $btnZu.Location = New-Object System.Drawing.Point(515, 470); $btnZu.Size = New-Object System.Drawing.Size(110, 34)
+    $btnZu.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+    $form.Controls.Add($btnZu)
+    $form.CancelButton = $btnZu
+
+    $btnLos.Add_Click({
+        if ($script:ZfPfade.Count -lt 2) { [System.Windows.Forms.MessageBox]::Show($form, "Bitte mindestens zwei PDFs in die Liste ziehen.", "Zusammenfuegen") | Out-Null; return }
+        $name = Sanitize-Dateiname ($txtName.Text -replace '\.pdf$', '')
+        if (-not $name) { [System.Windows.Forms.MessageBox]::Show($form, "Bitte einen Dateinamen eingeben.", "Zusammenfuegen") | Out-Null; return }
+        $ordner = [string]$lblZiel.Tag
+        $ziel = Join-Path $ordner "$name.pdf"
+        $istTeil = $false
+        foreach ($p in $script:ZfPfade) { if ($p -ieq $ziel) { $istTeil = $true } }
+        if ((Test-Path $ziel) -and -not ($istTeil -and $chkWeg.Checked)) {
+            $a = [System.Windows.Forms.MessageBox]::Show($form, "Die Datei '$name.pdf' gibt es dort schon. Ersetzen?", "Zusammenfuegen", [System.Windows.Forms.MessageBoxButtons]::YesNo)
+            if ($a -ne [System.Windows.Forms.DialogResult]::Yes) { return }
+        }
+        $form.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
+        try {
+            $neu = Fuege-PdfsZusammen @($script:ZfPfade) $ziel $chkWeg.Checked
+            $form.Cursor = [System.Windows.Forms.Cursors]::Default
+            $a = [System.Windows.Forms.MessageBox]::Show($form, "Fertig: $neu`n`nJetzt ansehen?", "Zusammenfuegen", [System.Windows.Forms.MessageBoxButtons]::YesNo)
+            if ($a -eq [System.Windows.Forms.DialogResult]::Yes) { Start-Process -FilePath $neu }
+            $form.Close()
+        } catch {
+            $form.Cursor = [System.Windows.Forms.Cursors]::Default
+            [System.Windows.Forms.MessageBox]::Show($form, "Zusammenfuegen fehlgeschlagen: $($_.Exception.Message)", "Zusammenfuegen") | Out-Null
+        }
+    })
+
+    & $aktualisiere
+    [void]$form.ShowDialog()
+    $form.Dispose()
+}
+
+# ======================= HINTERGRUND-AUFGABEN (jede Minute) =======================
+# Herzschlag fuer den Waechter, Mitarbeiterliste abgleichen, Tagesbericht,
+# automatisches Zusammenfuegen und Altbestand-Indexierung anstossen.
+$script:NebenStart = Get-Date
+$script:NebenZaehler = 0
+function Fuehre-NebenaufgabenAus {
+    if ($script:WirdBeendet) { return }
+    $script:NebenZaehler++
+    Schreibe-Herzschlag
+    if (($script:NebenZaehler % 2) -ne 1) { return }   # Rest nur jede Minute (Takt 30 s)
+    try { if (($script:NebenZaehler % 10) -eq 1) { Gleiche-MitarbeiterAb } } catch {}
+    try { Pruefe-Tagesbericht } catch {}
+    try { Pruefe-Gesamtbericht } catch {}
+    try { if ($timer.Enabled) { Pruefe-AutoZusammenfuegen } } catch {}
+    try {
+        if (((Get-Date) - $script:NebenStart).TotalMinutes -ge 10 -and ((Get-Date) - $script:IndexLetzterStart).TotalHours -ge 24) { Starte-AltbestandIndexierung }
+    } catch {}
+}
+
+$script:NebenTimer = New-Object System.Windows.Forms.Timer
+$script:NebenTimer.Interval = 30000
+$script:NebenTimer.Add_Tick({ try { Fuehre-NebenaufgabenAus } catch {} })
+
+# ======================= DiNo1-ORDNER IM SHOP =======================
+# Frueher hiess der Ordner "DiNo1-Druck-Scan-Status" - wird (beim Standard-
+# Ordner) einmalig in "DiNo1-Druck-Scan" umbenannt bzw. dorthin uebernommen.
+$script:DinoOrdnerNamen = @("DiNo1-Druck-Scan", "DiNo1-Druck-Scan-Status")
+function Ziehe-StatusOrdnerUm {
+    if (-not $script:StatusOrdnerStandard -or [string]::IsNullOrWhiteSpace($ShopOrdner)) { return }
+    try {
+        $alt = Join-Path $ShopOrdner "DiNo1-Druck-Scan-Status"
+        if (-not (Test-Path $alt -ErrorAction SilentlyContinue)) { return }
+        if (-not (Test-Path $StatusOrdner -ErrorAction SilentlyContinue)) {
+            try { Rename-Item -Path $alt -NewName (Split-Path $StatusOrdner -Leaf) -ErrorAction Stop; Schreibe-Log "Ordner '$alt' in '$StatusOrdner' umbenannt."; return } catch {}
+            New-Item -ItemType Directory -Path $StatusOrdner -Force -ErrorAction Stop | Out-Null
+        }
+        # Inhalt uebernehmen (Neueres nicht ueberschreiben), dann alten Ordner entfernen
+        foreach ($q in @(Get-ChildItem -Path $alt -Recurse -File -ErrorAction SilentlyContinue)) {
+            $rel = $q.FullName.Substring($alt.Length).TrimStart('\')
+            $z = Join-Path $StatusOrdner $rel
+            $zo = Split-Path $z -Parent
+            if (-not (Test-Path $zo)) { New-Item -ItemType Directory -Path $zo -Force | Out-Null }
+            if (-not (Test-Path $z) -or (Get-Item $z).LastWriteTimeUtc -lt $q.LastWriteTimeUtc) { Copy-Item -Path $q.FullName -Destination $z -Force -ErrorAction SilentlyContinue }
+        }
+        Remove-Item -Path $alt -Recurse -Force -ErrorAction SilentlyContinue
+        Schreibe-Log "Inhalt von '$alt' nach '$StatusOrdner' uebernommen."
+    } catch {
+        Schreibe-Log "HINWEIS: Ordner 'DiNo1-Druck-Scan-Status' konnte nicht umgezogen werden: $($_.Exception.Message)"
+    }
+}
+
+# ======================= ADMIN: ALLE SHOPS (NUTZER + TAGESBERICHTE) =======================
+# Fuer den Admin: liest die DiNo1-Ordner ALLER Shops (unterhalb des Ordners,
+# der die Shops enthaelt, z.B. "Y:\o2 shops") und zeigt
+#  - wer die App nutzt (PC, Benutzer, Version, zuletzt aktiv, heute abgelegt)
+#  - die Tagesberichte aller Shops fuer einen Tag.
+# Optional jeden Abend um 18:30 eine Meldung mit dem Gesamtbericht.
+$script:AdminWurzelDatei   = Join-Path $script:DatenOrdner "Admin_Shops-Ordner.txt"
+$script:AdminAnDatei       = Join-Path $script:DatenOrdner ("Admin_Gesamtbericht_" + (Sanitize-Dateiname $env:USERNAME) + ".txt")
+$script:AdminBerichtUhrzeit = "18:30"
+
+function Get-AdminWurzel {
+    try { if (Test-Path $script:AdminWurzelDatei) { $w = ([System.IO.File]::ReadAllText($script:AdminWurzelDatei)).Trim(); if ($w) { return $w } } } catch {}
+    try { return (Split-Path $ShopOrdner -Parent) } catch { return "" }
+}
+
+function Finde-DinoOrdner($wurzel) {
+    $treffer = New-Object System.Collections.Generic.List[string]
+    if (-not $wurzel -or -not (Test-Path -LiteralPath $wurzel -ErrorAction SilentlyContinue)) { return ,$treffer }
+    $ebene = @(Get-Item -LiteralPath $wurzel)
+    for ($i = 0; $i -le 2; $i++) {
+        $naechste = New-Object System.Collections.Generic.List[object]
+        foreach ($o in $ebene) {
+            foreach ($u in @(Get-ChildItem -LiteralPath $o.FullName -Directory -ErrorAction SilentlyContinue)) {
+                if ($script:DinoOrdnerNamen -contains $u.Name) { [void]$treffer.Add($u.FullName) } else { [void]$naechste.Add($u) }
+            }
+        }
+        $ebene = $naechste
+    }
+    return ,$treffer
+}
+
+function Lese-AlleNutzer($wurzel) {
+    $liste = New-Object System.Collections.Generic.List[object]
+    foreach ($o in (Finde-DinoOrdner $wurzel)) {
+        $shop = Split-Path (Split-Path $o -Parent) -Leaf
+        foreach ($d in @(Get-ChildItem -LiteralPath $o -Filter "*.json" -File -ErrorAction SilentlyContinue)) {
+            try { $j = [System.IO.File]::ReadAllText($d.FullName) | ConvertFrom-Json } catch { continue }
+            $zeit = $null
+            try { $zeit = [DateTime]::ParseExact([string]$j.Zeit, "yyyy-MM-dd HH:mm:ss", $null) } catch {}
+            [void]$liste.Add([PSCustomObject]@{ Shop = $shop; Daten = $j; Zeit = $zeit; Ordner = $o })
+        }
+    }
+    return ,$liste
+}
+
+function Lese-AlleTagesberichte($wurzel, [DateTime]$tag) {
+    $liste = New-Object System.Collections.Generic.List[object]
+    $praefix = $tag.ToString("yyyy-MM-dd") + "_"
+    foreach ($o in (Finde-DinoOrdner $wurzel)) {
+        $shop = Split-Path (Split-Path $o -Parent) -Leaf
+        $dateien = @(Get-ChildItem -LiteralPath (Join-Path $o "Berichte") -Filter "$praefix*.txt" -File -ErrorAction SilentlyContinue)
+        if ($dateien.Count -eq 0) {
+            [void]$liste.Add([PSCustomObject]@{ Shop = $shop; PC = "-"; Abgelegt = ""; Probleme = "kein Bericht (PC um 18 Uhr aus oder Version < 36)"; Text = ""; Problem = $true })
+            continue
+        }
+        foreach ($d in $dateien) {
+            $text = ""
+            try { $text = [System.IO.File]::ReadAllText($d.FullName, [System.Text.Encoding]::UTF8) } catch {}
+            $n = ""
+            if ($text -match 'Heute abgelegt:\s*(\d+)') { $n = $matches[1] }
+            $prob = ""
+            if ($text -match 'Achtung:\s*([^\r\n]+)') { $prob = $matches[1] }
+            [void]$liste.Add([PSCustomObject]@{ Shop = $shop; PC = $d.BaseName.Substring($praefix.Length); Abgelegt = $n; Probleme = $(if ($prob) { $prob } else { "OK" }); Text = $text; Problem = [bool]$prob })
+        }
+    }
+    return ,$liste
+}
+
+function Zeige-AdminUebersicht([int]$startSeite = 0) {
+    $script:AdminWurzel = Get-AdminWurzel
+    $form = New-Object System.Windows.Forms.Form
+    $form.Add_Load({ Setze-Design $this })
+    $form.Text = "Alle Shops - DiNo1 Druck & Scan (Admin)"
+    $form.Size = New-Object System.Drawing.Size(1150, 640)
+    $form.StartPosition = "CenterScreen"
+    $form.MinimumSize = New-Object System.Drawing.Size(800, 400)
+
+    $oben = New-Object System.Windows.Forms.Panel
+    $oben.Dock = "Top"; $oben.Height = 44
+    $form.Controls.Add($oben)
+    $lblWurzel = New-Object System.Windows.Forms.Label
+    $lblWurzel.Location = New-Object System.Drawing.Point(10, 14); $lblWurzel.Size = New-Object System.Drawing.Size(560, 20)
+    $lblWurzel.UseMnemonic = $false; $lblWurzel.AutoEllipsis = $true
+    $oben.Controls.Add($lblWurzel)
+    $btnWurzel = New-Object System.Windows.Forms.Button
+    $btnWurzel.Text = "Shops-Ordner..."; $btnWurzel.Location = New-Object System.Drawing.Point(580, 8); $btnWurzel.Size = New-Object System.Drawing.Size(120, 28)
+    $oben.Controls.Add($btnWurzel)
+    $datum = New-Object System.Windows.Forms.DateTimePicker
+    $datum.Format = [System.Windows.Forms.DateTimePickerFormat]::Short
+    $datum.Location = New-Object System.Drawing.Point(715, 10); $datum.Width = 110
+    $oben.Controls.Add($datum)
+    $btnNeu = New-Object System.Windows.Forms.Button
+    $btnNeu.Text = "Aktualisieren"; $btnNeu.Location = New-Object System.Drawing.Point(835, 8); $btnNeu.Size = New-Object System.Drawing.Size(110, 28)
+    $oben.Controls.Add($btnNeu)
+    $chkAbend = New-Object System.Windows.Forms.CheckBox
+    $chkAbend.Text = "Jeden Abend $($script:AdminBerichtUhrzeit) melden"
+    $chkAbend.Location = New-Object System.Drawing.Point(955, 13); $chkAbend.AutoSize = $true
+    $chkAbend.Checked = (Test-Path $script:AdminAnDatei)
+    $chkAbend.Add_CheckedChanged({
+        try {
+            if ($chkAbend.Checked) { [System.IO.File]::WriteAllText($script:AdminAnDatei, "an") } else { Remove-Item -Path $script:AdminAnDatei -Force -ErrorAction SilentlyContinue }
+        } catch {}
+    })
+    $oben.Controls.Add($chkAbend)
+
+    $tabs = New-Object System.Windows.Forms.TabControl
+    $tabs.Dock = "Fill"
+    $form.Controls.Add($tabs)
+    $tabs.BringToFront()
+    $tabNutzer = New-Object System.Windows.Forms.TabPage; $tabNutzer.Text = "Wer nutzt die App"
+    $tabBericht = New-Object System.Windows.Forms.TabPage; $tabBericht.Text = "Tagesberichte"
+    $tabs.TabPages.Add($tabNutzer); $tabs.TabPages.Add($tabBericht)
+
+    $neuesGrid = {
+        $g = New-Object System.Windows.Forms.DataGridView
+        $g.Dock = "Fill"; $g.ReadOnly = $true; $g.AllowUserToAddRows = $false; $g.RowHeadersVisible = $false
+        $g.SelectionMode = "FullRowSelect"; $g.MultiSelect = $false; $g.AutoSizeColumnsMode = "Fill"
+        $g.BackgroundColor = [System.Drawing.Color]::White
+        return $g
+    }
+    $gridN = & $neuesGrid
+    foreach ($s in @(@("Shop", 150), @("Standort", 110), @("PC", 100), @("Benutzer", 90), @("Version", 60), @("Zuletzt aktiv", 100), @("Heute abgelegt", 70), @("Gesamt abgelegt", 70), @("Hinweis", 160))) {
+        $i = $gridN.Columns.Add($s[0], $s[0]); $gridN.Columns[$i].FillWeight = $s[1]
+    }
+    $tabNutzer.Controls.Add($gridN)
+
+    $text = New-Object System.Windows.Forms.TextBox
+    $text.Dock = "Bottom"; $text.Height = 200; $text.Multiline = $true; $text.ReadOnly = $true; $text.ScrollBars = "Vertical"
+    $text.Font = New-Object System.Drawing.Font("Consolas", 9)
+    $text.BackColor = [System.Drawing.Color]::White
+    $tabBericht.Controls.Add($text)
+    $gridB = & $neuesGrid
+    foreach ($s in @(@("Shop", 160), @("PC / Benutzer", 140), @("Abgelegt", 60), @("Probleme", 300))) {
+        $i = $gridB.Columns.Add($s[0], $s[0]); $gridB.Columns[$i].FillWeight = $s[1]
+    }
+    $tabBericht.Controls.Add($gridB)
+    $gridB.BringToFront()
+    $berichtTexte = New-Object System.Collections.Generic.List[string]
+    $gridB.Add_SelectionChanged({
+        if ($gridB.SelectedRows.Count -eq 0) { return }
+        $i = $gridB.SelectedRows[0].Index
+        if ($i -ge 0 -and $i -lt $berichtTexte.Count) { $text.Text = $berichtTexte[$i] }
+    })
+
+    $lade = {
+        $form.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
+        $lblWurzel.Text = "Shops-Ordner: $($script:AdminWurzel)   (wird gelesen ...)"
+        $form.Refresh()
+        try {
+            $gridN.Rows.Clear()
+            $jetzt = Get-Date
+            $shops = @{}
+            foreach ($e in @((Lese-AlleNutzer $script:AdminWurzel) | Sort-Object Shop, { $_.Daten.Rechner })) {
+                $j = $e.Daten
+                $shops[$e.Shop] = $true
+                $alt = ($null -eq $e.Zeit -or ($jetzt - $e.Zeit).TotalMinutes -gt 30)
+                $hinweis = @()
+                if ($alt) { $hinweis += "nicht aktiv" }
+                if (-not $alt -and -not $j.HiDriveErreichbar) { $hinweis += "HiDrive weg" }
+                if ([int]$j.NichtUebertragen -gt 0) { $hinweis += "$($j.NichtUebertragen) nicht uebertragen" }
+                $i = $gridN.Rows.Add($e.Shop, [string]$j.Standort, [string]$j.Rechner, [string]$j.Benutzer, [string]$j.Version,
+                    $(if ($e.Zeit) { $e.Zeit.ToString("dd.MM. HH:mm") } else { "?" }), [string]$j.AbgelegtHeute, [string]$j.AbgelegtGesamt,
+                    $(if ($hinweis.Count) { $hinweis -join ", " } else { "OK" }))
+                if ($alt) { $gridN.Rows[$i].DefaultCellStyle.ForeColor = [System.Drawing.Color]::Gray }
+                elseif ($hinweis.Count) { $gridN.Rows[$i].DefaultCellStyle.BackColor = [System.Drawing.Color]::MistyRose }
+            }
+            $tabNutzer.Text = "Wer nutzt die App ($($gridN.Rows.Count) PCs in $($shops.Count) Shops)"
+
+            $gridB.Rows.Clear(); $berichtTexte.Clear(); $text.Text = ""
+            $summe = 0
+            foreach ($b in @((Lese-AlleTagesberichte $script:AdminWurzel $datum.Value.Date) | Sort-Object Shop, PC)) {
+                [void]$berichtTexte.Add($b.Text)
+                $i = $gridB.Rows.Add($b.Shop, $b.PC, $b.Abgelegt, $b.Probleme)
+                if ($b.Problem) { $gridB.Rows[$i].DefaultCellStyle.BackColor = [System.Drawing.Color]::MistyRose }
+                if ($b.Abgelegt) { $summe += [int]$b.Abgelegt }
+            }
+            $tabBericht.Text = "Tagesberichte $($datum.Value.ToString('dd.MM.yyyy')) ($summe Dokumente)"
+            $lblWurzel.Text = "Shops-Ordner: $($script:AdminWurzel)"
+        } catch {
+            $lblWurzel.Text = "Fehler: $($_.Exception.Message)"
+        } finally {
+            $form.Cursor = [System.Windows.Forms.Cursors]::Default
+        }
+    }
+    $btnNeu.Add_Click($lade)
+    $datum.Add_ValueChanged($lade)
+    $btnWurzel.Add_Click({
+        $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
+        $dlg.Description = "Ordner waehlen, der alle Shops enthaelt (z.B. Y:\o2 shops):"
+        if ($script:AdminWurzel -and (Test-Path $script:AdminWurzel)) { $dlg.SelectedPath = $script:AdminWurzel }
+        if ($dlg.ShowDialog($form) -eq [System.Windows.Forms.DialogResult]::OK) {
+            $script:AdminWurzel = $dlg.SelectedPath
+            try { [System.IO.File]::WriteAllText($script:AdminWurzelDatei, $script:AdminWurzel) } catch {}
+            & $lade
+        }
+    })
+    $tabs.SelectedIndex = $startSeite
+    $form.Add_Shown($lade)
+    [void]$form.ShowDialog()
+    $form.Dispose()
+}
+
+# Abends fuer den Admin: Gesamtbericht aller Shops als Meldung
+$script:AdminMerker = Join-Path $script:DatenOrdner ("Admin_Gesamtbericht_gemeldet_" + (Sanitize-Dateiname $env:USERNAME) + ".txt")
+function Pruefe-Gesamtbericht {
+    try {
+        if (-not (Test-Path $script:AdminAnDatei)) { return }
+        $jetzt = Get-Date
+        $grenze = [DateTime]::ParseExact($jetzt.ToString("yyyy-MM-dd") + " " + $script:AdminBerichtUhrzeit, "yyyy-MM-dd HH:mm", $null)
+        if ($jetzt -lt $grenze) { return }
+        $heute = $jetzt.ToString("yyyy-MM-dd")
+        if ((Test-Path $script:AdminMerker) -and ([System.IO.File]::ReadAllText($script:AdminMerker)).Trim() -eq $heute) { return }
+        [System.IO.File]::WriteAllText($script:AdminMerker, $heute)
+        $berichte = Lese-AlleTagesberichte (Get-AdminWurzel) $jetzt.Date
+        $summe = 0; $problemShops = New-Object System.Collections.Generic.List[string]; $shops = @{}
+        foreach ($b in $berichte) {
+            $shops[$b.Shop] = $true
+            if ($b.Abgelegt) { $summe += [int]$b.Abgelegt }
+            if ($b.Problem -and -not $problemShops.Contains($b.Shop)) { [void]$problemShops.Add($b.Shop) }
+        }
+        $txt = "$($shops.Count) Shops, heute $summe Dokument(e) abgelegt."
+        if ($problemShops.Count -gt 0) { $txt += "`nBitte pruefen: " + ($problemShops -join ", ") }
+        $script:BalloonAktion = { Zeige-AdminUebersicht 1 }
+        $trayIcon.ShowBalloonTip(20000, "DiNo1 Gesamtbericht aller Shops", ($txt + "`nKlicken fuer Details."), $(if ($problemShops.Count) { [System.Windows.Forms.ToolTipIcon]::Warning } else { [System.Windows.Forms.ToolTipIcon]::Info }))
+    } catch {
+        Schreibe-Log "HINWEIS: Gesamtbericht fehlgeschlagen: $($_.Exception.Message)"
+    }
+}
+
+# Abgelegte Dokumente (fuer die Statusdatei): heute / insgesamt auf diesem PC
+function Zaehle-Ablagen {
+    $heute = 0; $gesamt = 0
+    try {
+        if (Test-Path $script:SuchindexDatei) {
+            $p = '{"Zeit":"' + (Get-Date -Format 'yyyy-MM-dd')
+            foreach ($z in [System.IO.File]::ReadAllLines($script:SuchindexDatei)) {
+                if ($z.Contains('"Alt":') -or $z.Contains('"Quelle":')) { continue }
+                $gesamt++
+                if ($z.StartsWith($p)) { $heute++ }
+            }
+        }
+    } catch {}
+    return @($heute, $gesamt)
+}
+
+# Indexier-Prozess (Kopie dieser Datei als DiNo1-Indexierung.ps1): nur
+# Altbestand abarbeiten, kein Tray-Symbol, dann beenden.
+if ($script:IndexModus) {
+    try { Gleiche-MitarbeiterAb } catch {}
+    try { Fuehre-AltbestandIndexierungAus } catch { Schreibe-Log "FEHLER in der Altbestand-Indexierung: $($_.Exception.Message)" }
+    exit
+}
+
 # ======================= TRAY-SYMBOL =======================
 
 $trayIcon = New-Object System.Windows.Forms.NotifyIcon
@@ -5171,6 +5473,8 @@ $menuZusammen = $menu.Items.Add("PDFs zusammenfuegen...")
 $menuZusammen.Add_Click({ Zeige-Zusammenfuegen @() })
 $menuBericht = $menu.Items.Add("Tagesbericht anzeigen")
 $menuBericht.Add_Click({ Zeige-Tagesbericht })
+$menuAdmin = $menu.Items.Add("Alle Shops: Nutzer und Tagesberichte (Admin)...")
+$menuAdmin.Add_Click({ Zeige-AdminUebersicht 0 })
 $menuAltbestand = $menu.Items.Add("Alte Dokumente durchsuchbar machen")
 $menuAltbestand.Add_Click({
     Starte-AltbestandIndexierung
@@ -5563,6 +5867,7 @@ function Schreibe-Status($zustand) {
             if (-not $eltern -or -not (Test-Path $eltern -ErrorAction SilentlyContinue)) { return }   # HiDrive gerade nicht da
             New-Item -ItemType Directory -Path $StatusOrdner -Force -ErrorAction Stop | Out-Null
         }
+        $zaehler = Zaehle-Ablagen
         $status = [ordered]@{
             Rechner           = $env:COMPUTERNAME
             Benutzer          = $env:USERNAME
@@ -5581,6 +5886,9 @@ function Schreibe-Status($zustand) {
             UpdateQuelle      = $UpdateQuelle
             UpdatesGesperrt   = [bool](Test-Path $script:UpdateSperrDatei)
             LaufendeWatcher   = [int]$script:AnzahlWatcher
+            Shop              = $(try { Split-Path $ShopOrdner -Leaf } catch { "" })
+            AbgelegtHeute     = $zaehler[0]
+            AbgelegtGesamt    = $zaehler[1]
         }
         $name = (Sanitize-Dateiname "$($env:COMPUTERNAME)_$($env:USERNAME)") + ".json"
         $datei = Join-Path $StatusOrdner $name

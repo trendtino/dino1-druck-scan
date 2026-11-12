@@ -3,7 +3,7 @@ DiNo1 Druck & Scan - Uebersicht aller PCs
 
 Liest die Statusdateien, die jeder PC alle paar Minuten in den Status-Ordner
 auf HiDrive schreibt (Einstellung $StatusOrdner, Standard
-DiNo1-Druck-Scan-Status im Shop-Ordner), und zeigt sie als Tabelle:
+DiNo1-Druck-Scan im Shop-Ordner), und zeigt sie als Tabelle:
 Version, letzte Meldung, HiDrive erreichbar, nicht uebertragene Dokumente,
 letzte Ablage, letzter Fehler.
 
@@ -16,21 +16,21 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
-# Statusdateien liegen pro Shop in "<Shop-Ordner>\DiNo1-Druck-Scan-Status".
+# Statusdateien liegen pro Shop in "<Shop-Ordner>\DiNo1-Druck-Scan" (frueher "...-Status").
 # Gesucht wird ab dem Ordner, der alle Shops enthaelt (z.B. "Y:\o2 shops"):
 # dort und bis zu zwei Ebenen darunter.
-$script:StatusName = "DiNo1-Druck-Scan-Status"
+$script:StatusNamen = @("DiNo1-Druck-Scan", "DiNo1-Druck-Scan-Status")   # neuer und alter Name
 
 function Finde-StatusOrdner($wurzel) {
     $treffer = New-Object System.Collections.Generic.List[string]
     if (-not $wurzel -or -not (Test-Path -LiteralPath $wurzel)) { return ,$treffer }
-    if ((Split-Path $wurzel -Leaf) -eq $script:StatusName) { [void]$treffer.Add($wurzel); return ,$treffer }
+    if ($script:StatusNamen -contains (Split-Path $wurzel -Leaf)) { [void]$treffer.Add($wurzel); return ,$treffer }
     $ebene = @(Get-Item -LiteralPath $wurzel)
     for ($i = 0; $i -le 2; $i++) {
         $naechste = New-Object System.Collections.Generic.List[object]
         foreach ($o in $ebene) {
             foreach ($u in @(Get-ChildItem -LiteralPath $o.FullName -Directory -ErrorAction SilentlyContinue)) {
-                if ($u.Name -eq $script:StatusName) { [void]$treffer.Add($u.FullName) } else { [void]$naechste.Add($u) }
+                if ($script:StatusNamen -contains $u.Name) { [void]$treffer.Add($u.FullName) } else { [void]$naechste.Add($u) }
             }
         }
         $ebene = $naechste

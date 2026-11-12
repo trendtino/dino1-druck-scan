@@ -126,12 +126,12 @@ if ($pr) {
 
 $zeilen | Set-Content -Path $bericht -Encoding UTF8
 
-# Zusaetzlich in den Shop-Ordner auf HiDrive legen ("<Shop-Ordner>\DiNo1-Druck-Scan-Status\Logs")
+# Zusaetzlich in den Shop-Ordner auf HiDrive legen ("<Shop-Ordner>\DiNo1-Druck-Scan\Logs")
 try {
     $wt = [System.IO.File]::ReadAllText("C:\PaperPortErsatz\Watcher.ps1")
     $statusOrdner = ""
     if ($wt -match '(?m)^\$StatusOrdner\s*=\s*"([^"]+)"') { $statusOrdner = $matches[1] }
-    elseif ($wt -match '(?m)^\$ShopOrdner\s*=\s*"([^"]+)"') { $statusOrdner = Join-Path $matches[1] "DiNo1-Druck-Scan-Status" }
+    elseif ($wt -match '(?m)^\$ShopOrdner\s*=\s*"([^"]+)"') { $statusOrdner = Join-Path $matches[1] "DiNo1-Druck-Scan" }
     if ($statusOrdner -and $statusOrdner -ne "-" -and (Test-Path (Split-Path $statusOrdner -Parent))) {
         $logOrdner = Join-Path $statusOrdner "Logs"
         if (-not (Test-Path $logOrdner)) { New-Item -ItemType Directory -Path $logOrdner -Force | Out-Null }
