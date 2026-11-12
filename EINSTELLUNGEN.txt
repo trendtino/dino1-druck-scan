@@ -1,4 +1,4 @@
-DiNo1 Druck & Scan - Uebersicht ALLER Einstellungen (Paket 25)
+DiNo1 Druck & Scan - Uebersicht ALLER Einstellungen (Paket 26)
 ================================================================
 Installation von Dino1 GmbH und Andre Meschke
 
@@ -128,7 +128,7 @@ Ausfuehrliches Scan-Log               [AusfuehrlichesScanLog]  Standard: aus
 ================================================================
 B) FENSTER "SCAN-OPTIONEN" (bei jedem Scan)
 ================================================================
-Tray-Symbol -> Rechtsklick -> "Jetzt scannen" (oder Doppelklick)
+Tray-Symbol -> Rechtsklick -> "Jetzt scannen"
 
   Scanner        Auswahl aus der Scanner-Liste; "(nicht gefunden)" = aus
                  bzw. nicht erreichbar
@@ -351,3 +351,5 @@ NEU IN PAKET 17 (Version 17)
 - Version 25: Anheften des Tray-Symbols erkennt auch Symbole, die Windows
   noch unter dem alten Namen "PaperPort ..." kennt; klappt es nicht, steht
   ein HINWEIS mit den gefundenen Eintraegen im Log.
+- Version 26: Doppelklick auf das Tray-Symbol oeffnet das Programmfenster
+  (Jetzt scannen, Dokumente suchen, ...) statt sofort zu scannen.

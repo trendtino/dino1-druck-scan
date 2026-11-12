@@ -244,7 +244,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "25"
+$script:WatcherVersion      = "26"
 $script:WatcherVersionDatum = "12.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -3540,10 +3540,8 @@ $trayIcon.Add_BalloonTipClicked({
     if ($script:WarnungOrdner -and (Test-Path $script:WarnungOrdner)) { Start-Process -FilePath "explorer.exe" -ArgumentList "`"$($script:WarnungOrdner)`"" }
 })
 
-$trayIcon.Add_DoubleClick({
-    $timer.Stop()
-    try { Starte-Scan } finally { $timer.Start() }
-})
+# Doppelklick aufs Symbol: Programmfenster (Scannen, Dokumente suchen, ...)
+$trayIcon.Add_DoubleClick({ Zeige-Hauptfenster })
 
 # ======================= AUTOMATISCHE UPDATES =======================
 # Prueft beim Start und danach etwa alle 10 Minuten, ob unter $UpdateQuelle
@@ -3915,7 +3913,7 @@ function Schreibe-Status($zustand) {
 # 2. Programmfenster mit grossen Knoepfen (Scannen, Suchen, ...), zu oeffnen
 #    ueber die Verknuepfung "DiNo1 Druck & Scan" auf dem Desktop / im
 #    Startmenue (laesst sich auch an die Taskleiste anheften) oder ueber
-#    das Tray-Menue (Doppelklick aufs Symbol bleibt "Jetzt scannen").
+#    das Tray-Menue (oder Doppelklick aufs Symbol).
 #    Die Verknuepfung startet Oeffnen.ps1; das signalisiert dem laufenden
 #    Watcher ueber ein benanntes Ereignis, das Fenster zu zeigen (laeuft keiner,
 #    wird er gestartet).
