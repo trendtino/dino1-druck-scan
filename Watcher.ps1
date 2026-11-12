@@ -244,7 +244,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "47"
+$script:WatcherVersion      = "48"
 $script:WatcherVersionDatum = "12.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -5670,8 +5670,8 @@ $script:AdminWurzelDatei   = Join-Path $script:DatenOrdner "Admin_Shops-Ordner.t
 $script:AdminAnDatei       = Join-Path $script:DatenOrdner ("Admin_Gesamtbericht_" + (Sanitize-Dateiname $env:USERNAME) + ".txt")
 $script:AdminBerichtUhrzeit = "18:30"
 # Admin-Passwort: nur ein Pruefwert (PBKDF2, 100000 Runden) steht hier, nicht das Passwort selbst
-$script:AdminSalz      = "tD43/DErJMvkVPGV59jR3g=="
-$script:AdminPruefwert = "1nyIWNrOSA4+WNEs2nuOKmEesw/YALQlreOn4A3gJJo="
+$script:AdminSalz      = "XnGlnlDpIBeyl2v0Pxl81g=="
+$script:AdminPruefwert = @("ylpU7avD10I9oh2xMrtJIYcNEr9A5l3hKzW9yPNW9TU=", "1BNw2/JZjAaJYSVWHz4RWGuxvMG/ptiX/Va21+TO9Nc=")
 $script:AdminEntsperrt = $false
 
 function Pruefe-AdminPasswort([string]$passwort) {
@@ -5679,7 +5679,8 @@ function Pruefe-AdminPasswort([string]$passwort) {
         $kdf = New-Object System.Security.Cryptography.Rfc2898DeriveBytes($passwort, [Convert]::FromBase64String($script:AdminSalz), 100000)
         $wert = [Convert]::ToBase64String($kdf.GetBytes(32))
         $kdf.Dispose()
-        return ($wert -ceq $script:AdminPruefwert)
+        foreach ($w in @($script:AdminPruefwert)) { if ($wert -ceq $w) { return $true } }
+        return $false
     } catch { return $false }
 }
 
