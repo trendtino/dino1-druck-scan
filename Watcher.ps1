@@ -244,8 +244,8 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "22"
-$script:WatcherVersionDatum = "11.11.2026"
+$script:WatcherVersion      = "23"
+$script:WatcherVersionDatum = "12.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
 # Bei einem automatischen Update bleibt der Abschnitt KONFIGURATION dieses
@@ -2703,6 +2703,8 @@ function Verarbeite-Ablage {
                 Move-Item -Path $datei.FullName -Destination $zielpfad -Force
                 Schreibe-Log "Abgelegt ($($eingabe.Ziel)): $zielpfad"
                 Remove-Item -Path (Get-OcrTextDatei $datei.Name) -Force -ErrorAction SilentlyContinue
+                Merke-FuerSuche $eingabe $zielpfad $(if ($vorschau) { $vorschau.Text } else { "" })
+                Kopiere-SuchindexInShop
                 # Hinweis: Seit Einfuehrung von Ermittle-DateiSchluessel (Pfad +
                 # Aenderungszeit + Groesse statt nur Pfad) ist es unproblematisch,
                 # auch hier zu vermerken - ein neuer Druckauftrag unter demselben
@@ -3197,6 +3199,238 @@ function Sende-DiagnoseAnShop {
     Remove-Item -Path $lokal -Force -ErrorAction SilentlyContinue
 }
 
+# ======================= DOKUMENTSUCHE =======================
+# Jede Ablage wird in einem Suchverzeichnis vermerkt (Datum, Ziel,
+# Mitarbeiter, Bezeichnung, Pfad und - wenn vorhanden - der erkannte Text).
+# Lokal: C:\PaperPortErsatz\Suchindex.jsonl, Kopie im Shop-Ordner
+# "<Status-Ordner>\Suchindex\<PC>_<Benutzer>.jsonl" - so findet jeder PC
+# des Shops auch die Dokumente der anderen PCs.
+$script:SuchindexDatei = Join-Path $script:DatenOrdner "Suchindex.jsonl"
+$script:SuchindexKopieStand = ""
+
+function Merke-FuerSuche($eingabe, $zielpfad, $text) {
+    try {
+        $t = "$text"
+        if ($t.Length -gt 30000) { $t = $t.Substring(0, 30000) }
+        $eintrag = [ordered]@{
+            Zeit        = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+            Datum       = $eingabe.Datum
+            Ziel        = $eingabe.Ziel
+            Mitarbeiter = "$($eingabe.Mitarbeiter)"
+            Bezeichnung = $eingabe.Kunde
+            Pfad        = $zielpfad
+            PC          = $env:COMPUTERNAME
+            Text        = $t
+        }
+        $zeile = ($eintrag | ConvertTo-Json -Compress -Depth 2)
+        [System.IO.File]::AppendAllText($script:SuchindexDatei, $zeile + "`r`n", (New-Object System.Text.UTF8Encoding($false)))
+    } catch {
+        Schreibe-Log "HINWEIS: Suchverzeichnis konnte nicht ergaenzt werden: $($_.Exception.Message)"
+    }
+}
+
+# Alle paar Minuten bzw. nach einer Ablage: Kopie in den Shop-Ordner
+function Kopiere-SuchindexInShop {
+    try {
+        if (-not (Test-Path $script:SuchindexDatei)) { return }
+        $info = Get-Item $script:SuchindexDatei
+        $stand = "$($info.Length)|$($info.LastWriteTimeUtc.Ticks)"
+        if ($stand -eq $script:SuchindexKopieStand) { return }
+        if ([string]::IsNullOrWhiteSpace($StatusOrdner) -or $StatusOrdner.Trim() -eq "-" -or -not (Test-Path $StatusOrdner -ErrorAction SilentlyContinue)) { return }
+        $ordner = Join-Path $StatusOrdner "Suchindex"
+        if (-not (Test-Path $ordner)) { New-Item -ItemType Directory -Path $ordner -Force -ErrorAction Stop | Out-Null }
+        $ziel = Join-Path $ordner ((Get-PcKennung) + ".jsonl")
+        try { Copy-Item -Path $script:SuchindexDatei -Destination $ziel -Force -ErrorAction Stop }
+        catch { Remove-Item -Path $ziel -Force -ErrorAction SilentlyContinue; Copy-Item -Path $script:SuchindexDatei -Destination $ziel -Force -ErrorAction Stop }
+        $script:SuchindexKopieStand = $stand
+    } catch {}
+}
+
+# Liest das eigene und die Suchverzeichnisse der anderen PCs des Shops
+function Lese-Suchindex {
+    $eintraege = New-Object System.Collections.Generic.List[object]
+    $gesehen = New-Object System.Collections.Generic.HashSet[string]
+    $dateien = New-Object System.Collections.Generic.List[string]
+    if (Test-Path $script:SuchindexDatei) { [void]$dateien.Add($script:SuchindexDatei) }
+    try {
+        $ordner = Join-Path $StatusOrdner "Suchindex"
+        $eigene = (Get-PcKennung) + ".jsonl"
+        foreach ($f in @(Get-ChildItem -Path $ordner -Filter "*.jsonl" -File -ErrorAction SilentlyContinue)) {
+            if ($f.Name -ne $eigene) { [void]$dateien.Add($f.FullName) }
+        }
+    } catch {}
+    foreach ($d in $dateien) {
+        $zeilen = @()
+        try { $zeilen = [System.IO.File]::ReadAllLines($d, [System.Text.Encoding]::UTF8) } catch { continue }
+        foreach ($z in $zeilen) {
+            if (-not $z.Trim()) { continue }
+            try { $e = $z | ConvertFrom-Json } catch { continue }
+            if (-not $e.Pfad -or -not $gesehen.Add([string]$e.Pfad)) { continue }
+            [void]$eintraege.Add($e)
+        }
+    }
+    return ,$eintraege
+}
+
+# Kurzer Textausschnitt um den ersten Treffer
+function Get-Ausschnitt($text, $wort) {
+    if (-not $text -or -not $wort) { return "" }
+    $flach = ($text -replace '\s+', ' ')
+    $i = $flach.IndexOf($wort, [System.StringComparison]::OrdinalIgnoreCase)
+    if ($i -lt 0) { return "" }
+    $start = [Math]::Max(0, $i - 40)
+    $laenge = [Math]::Min($flach.Length - $start, $wort.Length + 80)
+    return ("..." + $flach.Substring($start, $laenge).Trim() + "...")
+}
+
+function Zeige-Suche {
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = "Dokumente suchen - DiNo1 Druck & Scan ($StandortName)"
+    $form.Size = New-Object System.Drawing.Size(1000, 600)
+    $form.StartPosition = "CenterScreen"
+    $form.MinimumSize = New-Object System.Drawing.Size(700, 400)
+
+    $oben = New-Object System.Windows.Forms.Panel
+    $oben.Dock = "Top"
+    $oben.Height = 70
+    $form.Controls.Add($oben)
+
+    $lbl = New-Object System.Windows.Forms.Label
+    $lbl.Text = "Suchbegriff(e):"
+    $lbl.Location = New-Object System.Drawing.Point(10, 13)
+    $lbl.AutoSize = $true
+    $oben.Controls.Add($lbl)
+
+    $txt = New-Object System.Windows.Forms.TextBox
+    $txt.Location = New-Object System.Drawing.Point(110, 10)
+    $txt.Width = 420
+    $oben.Controls.Add($txt)
+
+    $btnSuchen = New-Object System.Windows.Forms.Button
+    $btnSuchen.Text = "Suchen"
+    $btnSuchen.Location = New-Object System.Drawing.Point(540, 8)
+    $btnSuchen.Size = New-Object System.Drawing.Size(90, 26)
+    $oben.Controls.Add($btnSuchen)
+    $form.AcceptButton = $btnSuchen
+
+    $chkDateien = New-Object System.Windows.Forms.CheckBox
+    $chkDateien.Text = "Auch Dateinamen in den HiDrive-Ordnern durchsuchen (findet auch aeltere Dokumente, langsamer)"
+    $chkDateien.Location = New-Object System.Drawing.Point(110, 40)
+    $chkDateien.AutoSize = $true
+    $oben.Controls.Add($chkDateien)
+
+    $grid = New-Object System.Windows.Forms.DataGridView
+    $grid.Dock = "Fill"
+    $grid.ReadOnly = $true
+    $grid.AllowUserToAddRows = $false
+    $grid.RowHeadersVisible = $false
+    $grid.SelectionMode = "FullRowSelect"
+    $grid.MultiSelect = $false
+    $grid.AutoSizeColumnsMode = "Fill"
+    foreach ($s in @(@("Datum", 80), @("Bezeichnung", 160), @("Ablage", 140), @("Fundstelle", 260), @("Datei", 280))) {
+        $i = $grid.Columns.Add($s[0], $s[0]); $grid.Columns[$i].FillWeight = $s[1]
+    }
+    $form.Controls.Add($grid)
+    $grid.BringToFront()
+
+    $unten = New-Object System.Windows.Forms.Panel
+    $unten.Dock = "Bottom"
+    $unten.Height = 42
+    $unten.Padding = New-Object System.Windows.Forms.Padding(6, 7, 6, 7)
+    $form.Controls.Add($unten)
+
+    $lblInfo = New-Object System.Windows.Forms.Label
+    $lblInfo.Location = New-Object System.Drawing.Point(10, 13)
+    $lblInfo.AutoSize = $true
+    $lblInfo.Text = "Sucht in Bezeichnung, Mitarbeiter, Dateiname und im erkannten Text. Mehrere Woerter = alle muessen vorkommen."
+    $unten.Controls.Add($lblInfo)
+
+    $btnOrdner = New-Object System.Windows.Forms.Button
+    $btnOrdner.Text = "Ordner oeffnen"
+    $btnOrdner.Size = New-Object System.Drawing.Size(120, 28)
+    $btnOrdner.Dock = "Right"
+    $unten.Controls.Add($btnOrdner)
+
+    $btnOeffnen = New-Object System.Windows.Forms.Button
+    $btnOeffnen.Text = "Oeffnen"
+    $btnOeffnen.Size = New-Object System.Drawing.Size(120, 28)
+    $btnOeffnen.Dock = "Right"
+    $unten.Controls.Add($btnOeffnen)
+
+    $holePfad = {
+        if ($grid.SelectedRows.Count -eq 0) { return $null }
+        return [string]$grid.SelectedRows[0].Cells["Datei"].Value
+    }
+    $oeffne = {
+        $p = & $holePfad
+        if (-not $p) { return }
+        if (-not (Test-Path $p)) { [System.Windows.Forms.MessageBox]::Show($form, "Die Datei ist nicht (mehr) erreichbar:`n$p", "Oeffnen") | Out-Null; return }
+        try { Start-Process -FilePath $p } catch { [System.Windows.Forms.MessageBox]::Show($form, "Oeffnen fehlgeschlagen: $($_.Exception.Message)", "Oeffnen") | Out-Null }
+    }
+    $btnOeffnen.Add_Click($oeffne)
+    $grid.Add_CellDoubleClick($oeffne)
+    $btnOrdner.Add_Click({
+        $p = & $holePfad
+        if (-not $p) { return }
+        if (Test-Path $p) { Start-Process -FilePath "explorer.exe" -ArgumentList "/select,`"$p`"" }
+        elseif (Test-Path (Split-Path $p -Parent)) { Start-Process -FilePath "explorer.exe" -ArgumentList "`"$(Split-Path $p -Parent)`"" }
+    })
+
+    $btnSuchen.Add_Click({
+        $woerter = @(($txt.Text -split '\s+') | Where-Object { $_ })
+        if ($woerter.Count -eq 0) { return }
+        $form.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
+        $grid.Rows.Clear()
+        $lblInfo.Text = "Suche laeuft ..."
+        $form.Refresh()
+        $gefunden = New-Object System.Collections.Generic.HashSet[string]
+        $anzahl = 0
+        try {
+            foreach ($e in (Lese-Suchindex)) {
+                $alles = "$($e.Bezeichnung) $($e.Mitarbeiter) $($e.Ziel) $([System.IO.Path]::GetFileName([string]$e.Pfad)) $($e.Text)"
+                $passt = $true
+                foreach ($w in $woerter) { if ($alles.IndexOf($w, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) { $passt = $false; break } }
+                if (-not $passt) { continue }
+                $fund = Get-Ausschnitt ([string]$e.Text) $woerter[0]
+                if (-not $fund) { $fund = "(in Bezeichnung/Dateiname)" }
+                $ablage = if ($e.Ziel -eq "Mitarbeiter") { "Mitarbeiter: $($e.Mitarbeiter)" } else { "$($e.Ziel)" }
+                $i = $grid.Rows.Add([object[]]@($e.Datum, $e.Bezeichnung, $ablage, $fund, $e.Pfad))
+                if (-not (Test-Path ([string]$e.Pfad) -ErrorAction SilentlyContinue)) { $grid.Rows[$i].DefaultCellStyle.ForeColor = [System.Drawing.Color]::Gray }
+                [void]$gefunden.Add([string]$e.Pfad)
+                $anzahl++
+            }
+            if ($chkDateien.Checked) {
+                $lblInfo.Text = "Durchsuche Dateinamen auf HiDrive ..."; $form.Refresh()
+                $ordner = New-Object System.Collections.Generic.List[string]
+                foreach ($k in $MitarbeiterOrdner.Keys) { [void]$ordner.Add((Join-Path $ZielBasis $MitarbeiterOrdner[$k])) }
+                foreach ($o in @($ShopOrdner, $KassenOrdner, $LokalerOrdner)) { if ($o) { [void]$ordner.Add($o) } }
+                foreach ($o in ($ordner | Select-Object -Unique)) {
+                    if (-not (Test-Path $o -ErrorAction SilentlyContinue)) { continue }
+                    foreach ($f in @(Get-ChildItem -Path $o -Filter "*.pdf" -File -Recurse -ErrorAction SilentlyContinue)) {
+                        if ($gefunden.Contains($f.FullName)) { continue }
+                        $passt = $true
+                        foreach ($w in $woerter) { if ($f.FullName.IndexOf($w, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) { $passt = $false; break } }
+                        if (-not $passt) { continue }
+                        [void]$gefunden.Add($f.FullName)
+                        [void]$grid.Rows.Add([object[]]@($f.LastWriteTime.ToString("yyyy-MM-dd"), $f.BaseName, (Split-Path (Split-Path $f.FullName -Parent) -Leaf), "(Dateiname)", $f.FullName))
+                        $anzahl++
+                    }
+                    [System.Windows.Forms.Application]::DoEvents()
+                }
+            }
+            $grid.Sort($grid.Columns["Datum"], [System.ComponentModel.ListSortDirection]::Descending)
+            $lblInfo.Text = "$anzahl Treffer. Doppelklick = oeffnen. Grau = Datei nicht erreichbar (verschoben oder auf einem anderen PC gespeichert)."
+        } catch {
+            $lblInfo.Text = "Fehler bei der Suche: $($_.Exception.Message)"
+        } finally {
+            $form.Cursor = [System.Windows.Forms.Cursors]::Default
+        }
+    })
+
+    $form.Add_Shown({ $txt.Focus() })
+    [void]$form.ShowDialog()
+}
+
 # ======================= TRAY-SYMBOL =======================
 
 $trayIcon = New-Object System.Windows.Forms.NotifyIcon
@@ -3205,6 +3439,9 @@ $trayIcon.Text = "DiNo1 Druck & Scan ($StandortName)"
 $trayIcon.Visible = $true
 
 $menu = New-Object System.Windows.Forms.ContextMenuStrip
+$menuSuche = $menu.Items.Add("Dokumente suchen...")
+$menuSuche.Font = New-Object System.Drawing.Font($menuSuche.Font, [System.Drawing.FontStyle]::Bold)
+$menuSuche.Add_Click({ Zeige-Suche })
 $menuScan = $menu.Items.Add("Jetzt scannen")
 $menuScan.Add_Click({
     $timer.Stop()
@@ -3613,6 +3850,7 @@ function Pruefe-Zustand {
     }
     Schreibe-Status $z
     Kopiere-LogInShopOrdner
+    Kopiere-SuchindexInShop
 }
 
 function Schreibe-Status($zustand) {

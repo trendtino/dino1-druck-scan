@@ -1,4 +1,4 @@
-DiNo1 Druck & Scan - Uebersicht ALLER Einstellungen (Paket 21)
+DiNo1 Druck & Scan - Uebersicht ALLER Einstellungen (Paket 23)
 ================================================================
 Installation von Dino1 GmbH und Andre Meschke
 
@@ -183,6 +183,8 @@ C:\PaperPortErsatz\Log.txt             Protokoll (Log_alt.txt = vorheriges)
 TRAY-MENUE (Rechtsklick auf das Symbol unten rechts)
 ================================================================
 
+Dokumente suchen...                    Suche in allen abgelegten Dokumenten
+                                      des Shops (auch Text im Dokument)
 Jetzt scannen                         Scan mit Fenster "Scan-Optionen"
 Jetzt scannen (Scanner-Fenster ...)   Herstellerfenster des Scanners, nur
                                       1 Seite, Windows fragt nach Scanner
@@ -332,3 +334,9 @@ NEU IN PAKET 17 (Version 17)
   "<Shop-Ordner>\DiNo1-Druck-Scan-Status\Logs\<PC>_<Benutzer>_Log.txt"
   kopiert. Tray -> "Diagnose in den Shop-Ordner legen" erstellt dort einen
   Diagnosebericht. Diagnose.cmd legt seinen Bericht ebenfalls dort ab.
+- Version 23: Tray -> "Dokumente suchen...". Findet abgelegte Dokumente
+  ueber Bezeichnung, Mitarbeiter, Dateiname und den erkannten Text (bei
+  Scans alle Seiten, bei Ausdrucken die erste Seite). Gesucht wird in den
+  Ablagen ALLER PCs des Shops (Suchverzeichnis im Shop-Ordner unter
+  DiNo1-Druck-Scan-Status\Suchindex). Erfasst werden Dokumente ab Version
+  23; aeltere findet das Haekchen "Auch Dateinamen ... durchsuchen".
