@@ -244,7 +244,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "46"
+$script:WatcherVersion      = "47"
 $script:WatcherVersionDatum = "12.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -6082,7 +6082,7 @@ function Av-NeuerKnoten([string]$text, [string]$pfad) {
 
 function Av-LadeOrdner([string]$ordner) {
     Av-StoppeSuche
-    Av-EntferneOrdnerMarke
+    Av-EntferneAlleMarken
     $script:AvSuchbegriff = $null
     $script:AvOrdner = $ordner
     $script:AvMiniTimer.Stop()
@@ -6437,11 +6437,37 @@ function Av-FindeKnoten([string]$dir) {
 # Suchtreffer: Ordner links blau hinterlegen, ohne ihn zu laden
 $script:AvBaumSync = $false
 $script:AvTrefferKnoten = $null
+$script:AvTrefferOrdner = @{}     # Ordner mit Treffern (hellblau)
+$script:AvHellblau = [System.Drawing.Color]::FromArgb(204, 228, 247)
 function Av-EntferneOrdnerMarke {
     if ($script:AvTrefferKnoten) {
-        try { $script:AvTrefferKnoten.BackColor = [System.Drawing.Color]::Empty; $script:AvTrefferKnoten.ForeColor = [System.Drawing.Color]::Empty } catch {}
+        try {
+            if ($script:AvTrefferOrdner.ContainsKey(([string]$script:AvTrefferKnoten.Tag).ToLowerInvariant())) {
+                $script:AvTrefferKnoten.BackColor = $script:AvHellblau
+            } else {
+                $script:AvTrefferKnoten.BackColor = [System.Drawing.Color]::Empty
+            }
+            $script:AvTrefferKnoten.ForeColor = [System.Drawing.Color]::Empty
+        } catch {}
         $script:AvTrefferKnoten = $null
     }
+}
+function Av-EntferneAlleMarken {
+    foreach ($k in @($script:AvTrefferOrdner.Values)) { try { $k.BackColor = [System.Drawing.Color]::Empty; $k.ForeColor = [System.Drawing.Color]::Empty } catch {} }
+    $script:AvTrefferOrdner = @{}
+    Av-EntferneOrdnerMarke
+}
+# Ordner eines Treffers hellblau hinterlegen (hoechstens 50 Ordner)
+function Av-MerkeTrefferOrdner([string]$pfad) {
+    try {
+        $dir = [System.IO.Path]::GetDirectoryName($pfad).TrimEnd('\')
+        $schluessel = $dir.ToLowerInvariant()
+        if ($script:AvTrefferOrdner.ContainsKey($schluessel) -or $script:AvTrefferOrdner.Count -ge 50) { return }
+        $k = Av-FindeKnoten $dir
+        if (-not $k -or ([string]$k.Tag).ToLowerInvariant() -ne $schluessel) { return }
+        $script:AvTrefferOrdner[$schluessel] = $k
+        if (-not [object]::ReferenceEquals($k, $script:AvTrefferKnoten)) { $k.BackColor = $script:AvHellblau }
+    } catch {}
 }
 function Av-MarkiereOrdner([string]$pfad) {
     try {
@@ -6490,6 +6516,7 @@ function Av-StarteSuche {
     if ($woerter.Count -eq 0) { return }
     Av-StoppeSuche
     Av-ZeigeSeite $null 0
+    Av-EntferneAlleMarken
     $script:AvMiniTimer.Stop()
     $script:AvListe.BeginUpdate()
     $script:AvListe.Items.Clear()
@@ -6554,10 +6581,16 @@ function Av-SucheTick {
         if (-not $zeile[5]) { $it.ForeColor = [System.Drawing.Color]::Gray }
         [void]$script:AvListe.Items.Add($it)
         $s.Anzahl++
+        Av-MerkeTrefferOrdner $pfad
     }
     if ($n -gt 0) {
         $script:AvListe.EndUpdate()
         if (-not $script:AvMiniTimer.Enabled) { $script:AvMiniTimer.Start() }
+        # Ersten Treffer gleich markieren: Vorschau + Ordner blau
+        if ($script:AvListe.SelectedItems.Count -eq 0 -and $script:AvListe.Items.Count -gt 0) {
+            $script:AvListe.Items[0].Selected = $true
+            $script:AvListe.Items[0].Focused = $true
+        }
     }
     if ($z.Fertig -and $z.Treffer.Count -eq 0) {
         $script:AvSuchTimer.Stop()

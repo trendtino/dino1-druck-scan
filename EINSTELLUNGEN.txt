@@ -451,3 +451,5 @@ NEU IN PAKET 17 (Version 17)
   oeffnet den Ordner mit der Datei.
 - Version 46: Ordner des Suchtreffers wird links blau hinterlegt; unter den
   Bildern steht der komplette Dateiname (mehr Platz je Eintrag).
+- Version 47: Alle Ordner mit Treffern werden hellblau hinterlegt, der Ordner des
+  markierten Treffers kraeftig blau. Der erste Treffer wird automatisch markiert.
