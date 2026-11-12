@@ -244,7 +244,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "48"
+$script:WatcherVersion      = "49"
 $script:WatcherVersionDatum = "12.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -5671,7 +5671,7 @@ $script:AdminAnDatei       = Join-Path $script:DatenOrdner ("Admin_Gesamtbericht
 $script:AdminBerichtUhrzeit = "18:30"
 # Admin-Passwort: nur ein Pruefwert (PBKDF2, 100000 Runden) steht hier, nicht das Passwort selbst
 $script:AdminSalz      = "XnGlnlDpIBeyl2v0Pxl81g=="
-$script:AdminPruefwert = @("ylpU7avD10I9oh2xMrtJIYcNEr9A5l3hKzW9yPNW9TU=", "1BNw2/JZjAaJYSVWHz4RWGuxvMG/ptiX/Va21+TO9Nc=")
+$script:AdminPruefwert = @("ylpU7avD10I9oh2xMrtJIYcNEr9A5l3hKzW9yPNW9TU=")
 $script:AdminEntsperrt = $false
 
 function Pruefe-AdminPasswort([string]$passwort) {
