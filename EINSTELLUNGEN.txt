@@ -435,3 +435,8 @@ NEU IN PAKET 17 (Version 17)
   Drucken, Umbenennen, Zusammenfuegen, PDFs herausziehen (z. B. in E-Mails).
   Programmfenster jetzt mit 12 Kacheln in 3 Spalten (u. a. Admin, Ansehen,
   Alte Dokumente, Diagnose).
+- Version 43: Dokumente ansehen: groessere Knoepfe mit Symbolen, Seite drehen
+  (links/rechts), Seite entfernen, alle Seiten drehen (Rechtsklick). Eine PDF auf
+  eine andere ziehen haengt sie hinten an (Einzelteile-Ordner). Original wird vor
+  dem Bearbeiten in C:\PaperPortErsatz\Sicherung gesichert (neueste 100).
+  Programmfenster in Gruppen: Erfassen, Finden, Ordner, Berichte/Einstellungen.
