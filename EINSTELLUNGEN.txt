@@ -366,3 +366,9 @@ NEU IN PAKET 17 (Version 17)
 - Version 30: Ist als Kassen-Ordner schon der Jahresordner eingetragen
   (z.B. ...\Kasse\2026), wird trotzdem richtig in "2026\11 November"
   abgelegt und im neuen Jahr "2027" daneben angelegt.
+- Version 31: "Dokumente suchen" durchsucht nur noch den Shop-Ordner und
+  die Ordner der hier hinterlegten Mitarbeiter (nicht Kasse/lokal/andere
+  Shops). Die Suche laeuft im Hintergrund - das Fenster friert nicht mehr
+  ein, Treffer erscheinen nach und nach, Knopf "Stopp" bricht ab. Neu auf
+  dem Desktop: Verknuepfung "DiNo1 neu starten" (beendet einen haengenden
+  Watcher und startet ihn neu). Zusaetzlich liegt DiNo1-Neustart.cmd im Paket.
