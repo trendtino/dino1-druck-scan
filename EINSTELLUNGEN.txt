@@ -377,3 +377,6 @@ NEU IN PAKET 17 (Version 17)
   Alle Fenster haben flache Knoepfe, eine helle Flaeche und Orange als
   Akzentfarbe. Tray-Symbol, Fenstersymbol und Verknuepfungen zeigen jetzt
   den DiNo1-Dino.
+- Version 33: Desktop- und Startmenue-Verknuepfungen bekommen das neue
+  Dino-Symbol, "DiNo1 neu starten" ein eigenes orangefarbenes Neustart-Symbol
+  (auch bereits vorhandene Verknuepfungen werden umgestellt).
