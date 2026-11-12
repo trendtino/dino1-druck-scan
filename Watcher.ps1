@@ -244,7 +244,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "41"
+$script:WatcherVersion      = "42"
 $script:WatcherVersionDatum = "12.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -4569,8 +4569,6 @@ function Hole-Vorschaubild($pdfPfad) {
     return $bild
 }
 
-# Erzeugt eine (durchsuchbare) PDF aus Seitenbildern an einem beliebigen Ort.
-# $seiten: Objekte mit Png + Dpi. Rueckgabe: erkannter Gesamttext.
 # ----- Texterkennung fuer gedruckte PDFs (Dino1 Drucker) -----
 $script:DruckTexterkennung = $true
 $script:DruckOcrBreitePx   = 2200    # ca. 265 dpi bei A4 - gut lesbar auch bei Kleingedrucktem
@@ -4637,6 +4635,8 @@ function Ergaenze-PdfText([string]$pfad) {
     }
 }
 
+# Erzeugt eine (durchsuchbare) PDF aus Seitenbildern an einem beliebigen Ort.
+# $seiten: Objekte mit Png + Dpi. Rueckgabe: erkannter Gesamttext.
 function Schreibe-PdfAusSeiten($seiten, $zielPfad, [string]$fortschrittText = "PDF wird erstellt ...") {
     $jpegs  = New-Object System.Collections.Generic.List[byte[]]
     $sw     = New-Object System.Collections.Generic.List[bool]
@@ -5938,6 +5938,480 @@ if ($script:IndexModus) {
     exit
 }
 
+# ======================= DOKUMENTE ANSEHEN (wie PaperPort) =======================
+# Links die Ordner (Shop, Mitarbeiter, Kasse), in der Mitte die PDFs als
+# Seitenbilder, rechts eine grosse Vorschau mit Blaettern. Die kleinen Bilder
+# werden auf dem PC zwischengespeichert (Miniaturen), damit es beim naechsten
+# Mal sofort geht.
+$script:MiniaturOrdner = Join-Path $script:DatenOrdner "Miniaturen"
+$script:AvMiniB = 132
+$script:AvMiniH = 176
+
+# Eine Seite als Bitmap. Rueckgabe @{ Bild; Anzahl; Index } oder $null
+function Rendere-PdfSeite([string]$pdfPfad, [int]$index, [int]$breitePx) {
+    if (-not (Initialisiere-WinRT)) { return $null }
+    $kopie = Join-Path $ScanTempOrdner ("Ansicht_" + [guid]::NewGuid().ToString("N") + ".pdf")
+    $seite = $null; $mem = $null; $netz = $null
+    try {
+        Copy-Item -LiteralPath $pdfPfad -Destination $kopie -Force -ErrorAction Stop
+        $datei = Warte-WinRT ([Windows.Storage.StorageFile]::GetFileFromPathAsync($kopie)) ([Windows.Storage.StorageFile])
+        $dok = Warte-WinRT ([Windows.Data.Pdf.PdfDocument]::LoadFromFileAsync($datei)) ([Windows.Data.Pdf.PdfDocument])
+        $anzahl = [int]$dok.PageCount
+        if ($anzahl -lt 1) { return $null }
+        if ($index -ge $anzahl) { $index = $anzahl - 1 }
+        if ($index -lt 0) { $index = 0 }
+        $seite = $dok.GetPage([uint32]$index)
+        $mem = New-Object Windows.Storage.Streams.InMemoryRandomAccessStream
+        $opt = New-Object Windows.Data.Pdf.PdfPageRenderOptions
+        $opt.DestinationWidth = [uint32]$breitePx
+        Warte-WinRTAktion ($seite.RenderToStreamAsync($mem, $opt))
+        $mem.Seek(0)
+        $netz = [System.IO.WindowsRuntimeStreamExtensions]::AsStreamForRead($mem)
+        $ms = New-Object System.IO.MemoryStream
+        $netz.CopyTo($ms)
+        $ms.Position = 0
+        $tmp = [System.Drawing.Image]::FromStream($ms)
+        $bild = New-Object System.Drawing.Bitmap $tmp
+        $tmp.Dispose(); $ms.Dispose()
+        return @{ Bild = $bild; Anzahl = $anzahl; Index = $index }
+    } catch {
+        return $null
+    } finally {
+        if ($netz) { try { $netz.Dispose() } catch {} }
+        if ($mem) { try { $mem.Dispose() } catch {} }
+        if ($seite) { try { $seite.Dispose() } catch {} }
+        Remove-Item -Path $kopie -Force -ErrorAction SilentlyContinue
+    }
+}
+
+# Kleines Bild der ersten Seite, mit Zwischenspeicher auf dem PC
+function Hole-Miniatur([string]$pfad) {
+    try {
+        $fi = New-Object System.IO.FileInfo($pfad)
+        $schluessel = $fi.FullName.ToLowerInvariant() + "|" + $fi.LastWriteTimeUtc.Ticks + "|" + $fi.Length
+        $sha = [System.Security.Cryptography.SHA1]::Create()
+        $hash = ([BitConverter]::ToString($sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($schluessel)))).Replace("-", "")
+        $sha.Dispose()
+        $cache = Join-Path $script:MiniaturOrdner ($hash + ".jpg")
+        if (Test-Path $cache) {
+            $ms = New-Object System.IO.MemoryStream(,[System.IO.File]::ReadAllBytes($cache))
+            $tmp = [System.Drawing.Image]::FromStream($ms)
+            $bmp = New-Object System.Drawing.Bitmap $tmp
+            $tmp.Dispose(); $ms.Dispose()
+            return $bmp
+        }
+        $r = Rendere-PdfSeite $pfad 0 264
+        if (-not $r) { return $null }
+        try {
+            if (-not (Test-Path $script:MiniaturOrdner)) { New-Item -ItemType Directory -Path $script:MiniaturOrdner -Force | Out-Null }
+            $r.Bild.Save($cache, [System.Drawing.Imaging.ImageFormat]::Jpeg)
+        } catch {}
+        return $r.Bild
+    } catch {
+        return $null
+    }
+}
+
+# Seitenbild mittig mit Rahmen und Schatten auf eine feste Groesse setzen
+function Rahme-Miniatur($bild) {
+    $b = $script:AvMiniB; $h = $script:AvMiniH
+    $bmp = New-Object System.Drawing.Bitmap($b, $h)
+    $g = [System.Drawing.Graphics]::FromImage($bmp)
+    try {
+        $g.Clear([System.Drawing.Color]::White)
+        $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+        if ($bild) {
+            $f = [Math]::Min(($b - 8) / $bild.Width, ($h - 8) / $bild.Height)
+            $w = [int]($bild.Width * $f); $hh = [int]($bild.Height * $f)
+        } else {
+            $w = $b - 30; $hh = $h - 16
+        }
+        $x = [int](($b - $w) / 2); $y = [int](($h - $hh) / 2)
+        $schatten = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(40, 0, 0, 0))
+        $g.FillRectangle($schatten, $x + 3, $y + 3, $w, $hh)
+        $schatten.Dispose()
+        if ($bild) {
+            $g.DrawImage($bild, $x, $y, $w, $hh)
+        } else {
+            $g.FillRectangle([System.Drawing.Brushes]::WhiteSmoke, $x, $y, $w, $hh)
+            $sf = New-Object System.Drawing.StringFormat
+            $sf.Alignment = "Center"; $sf.LineAlignment = "Center"
+            $schrift = New-Object System.Drawing.Font("Segoe UI", 10)
+            $g.DrawString("PDF", $schrift, [System.Drawing.Brushes]::Gray, (New-Object System.Drawing.RectangleF($x, $y, $w, $hh)), $sf)
+            $schrift.Dispose(); $sf.Dispose()
+        }
+        $stift = New-Object System.Drawing.Pen($script:FarbeRahmen)
+        $g.DrawRectangle($stift, $x, $y, $w - 1, $hh - 1)
+        $stift.Dispose()
+    } finally { $g.Dispose() }
+    return $bmp
+}
+
+function Av-HatUnterordner([string]$pfad) {
+    try { return [System.IO.Directory]::EnumerateDirectories($pfad).GetEnumerator().MoveNext() } catch { return $false }
+}
+
+function Av-NeuerKnoten([string]$text, [string]$pfad) {
+    $n = New-Object System.Windows.Forms.TreeNode($text)
+    $n.Tag = $pfad
+    if ($pfad -and (Av-HatUnterordner $pfad)) { $d = $n.Nodes.Add("..."); $d.Tag = $null }
+    return $n
+}
+
+function Av-LadeOrdner([string]$ordner) {
+    $script:AvOrdner = $ordner
+    $script:AvMiniTimer.Stop()
+    $liste = $script:AvListe
+    $liste.BeginUpdate()
+    try {
+        $liste.Items.Clear()
+        $script:AvBilder.Images.Clear()
+        $script:AvBilder.Images.Add("_leer", (Rahme-Miniatur $null))
+        if (-not $ordner) { $script:AvPfad.Text = "Bitte links einen Ordner waehlen."; return }
+        $script:AvPfad.Text = $ordner
+        $filter = $script:AvFilter.Text.Trim()
+        $dateien = @(Get-ChildItem -LiteralPath $ordner -Filter "*.pdf" -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)
+        if ($filter) { $dateien = @($dateien | Where-Object { $_.Name.IndexOf($filter, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 }) }
+        $gesamt = $dateien.Count
+        if ($dateien.Count -gt 500) { $dateien = $dateien[0..499] }
+        foreach ($f in $dateien) {
+            $it = New-Object System.Windows.Forms.ListViewItem($f.BaseName)
+            $it.ImageKey = "_leer"
+            $it.Tag = $f.FullName
+            $it.ToolTipText = $f.Name + "`n" + $f.LastWriteTime.ToString("dd.MM.yyyy HH:mm")
+            [void]$liste.Items.Add($it)
+        }
+        $script:AvStatus.Text = "$gesamt PDF(s)" + $(if ($gesamt -gt 500) { " - die neuesten 500 werden angezeigt" } else { "" })
+    } finally {
+        $liste.EndUpdate()
+    }
+    $script:AvNaechste = 0
+    if ($liste.Items.Count -gt 0) { $script:AvMiniTimer.Start() }
+    Av-ZeigeSeite $null 0
+}
+
+function Av-ZeigeSeite($pfad, [int]$index) {
+    $alt = $script:AvGross.Image
+    $script:AvGross.Image = $null
+    if ($alt) { try { $alt.Dispose() } catch {} }
+    $script:AvSeitePfad = $pfad
+    if (-not $pfad) {
+        $script:AvName.Text = ""; $script:AvSeite.Text = ""
+        $script:AvZurueck.Enabled = $false; $script:AvVor.Enabled = $false
+        return
+    }
+    $script:AvName.Text = [System.IO.Path]::GetFileName($pfad)
+    $script:AvSeite.Text = "wird geladen ..."
+    $script:AvSeite.Refresh()
+    $breite = [Math]::Max(900, [Math]::Min(1600, $script:AvGross.Width * 2))
+    $r = Rendere-PdfSeite $pfad $index $breite
+    if ($script:AvSeitePfad -ne $pfad) { if ($r) { $r.Bild.Dispose() }; return }
+    if (-not $r) {
+        $script:AvSeite.Text = "Keine Vorschau moeglich"
+        $script:AvZurueck.Enabled = $false; $script:AvVor.Enabled = $false
+        return
+    }
+    $script:AvGross.Image = $r.Bild
+    $script:AvSeiteNr = $r.Index
+    $script:AvSeiten = $r.Anzahl
+    $script:AvSeite.Text = "Seite $($r.Index + 1) von $($r.Anzahl)"
+    $script:AvZurueck.Enabled = ($r.Index -gt 0)
+    $script:AvVor.Enabled = ($r.Index -lt $r.Anzahl - 1)
+}
+
+function Av-Markierte {
+    return @($script:AvListe.SelectedItems | ForEach-Object { [string]$_.Tag } | Where-Object { $_ })
+}
+
+function Av-Oeffnen {
+    foreach ($p in (Av-Markierte | Select-Object -First 5)) {
+        try { Start-Process -FilePath $p } catch { [System.Windows.Forms.MessageBox]::Show("Oeffnen fehlgeschlagen: $($_.Exception.Message)", "DiNo1 Druck & Scan") | Out-Null }
+    }
+}
+
+function Zeige-DokumenteAnsehen {
+    $f = New-Object System.Windows.Forms.Form
+    $f.Add_Load({ Setze-Design $this })
+    $f.Text = "Dokumente ansehen - DiNo1 Druck & Scan ($StandortName)"
+    $f.Size = New-Object System.Drawing.Size(1360, 820)
+    $f.MinimumSize = New-Object System.Drawing.Size(1000, 560)
+    $f.StartPosition = "CenterScreen"
+    $f.KeyPreview = $true
+    try { $f.Icon = Hole-DinoIcon 32 } catch {}
+
+    # ---- Leiste oben ----
+    $oben = New-Object System.Windows.Forms.Panel
+    $oben.Dock = "Top"; $oben.Height = 46
+    $oben.BackColor = $script:FarbeFlaeche
+
+    $lblF = New-Object System.Windows.Forms.Label
+    $lblF.Text = "Filter:"; $lblF.AutoSize = $true
+    $lblF.Location = New-Object System.Drawing.Point(12, 14)
+    $oben.Controls.Add($lblF)
+
+    $script:AvFilter = New-Object System.Windows.Forms.TextBox
+    $script:AvFilter.Location = New-Object System.Drawing.Point(58, 11)
+    $script:AvFilter.Size = New-Object System.Drawing.Size(220, 24)
+    $oben.Controls.Add($script:AvFilter)
+
+    $btnNeu = New-Object System.Windows.Forms.Button
+    $btnNeu.Text = "Aktualisieren"
+    $btnNeu.Location = New-Object System.Drawing.Point(290, 9); $btnNeu.Size = New-Object System.Drawing.Size(110, 28)
+    $oben.Controls.Add($btnNeu)
+
+    $btnSuche = New-Object System.Windows.Forms.Button
+    $btnSuche.Text = "Volltextsuche ..."
+    $btnSuche.Location = New-Object System.Drawing.Point(408, 9); $btnSuche.Size = New-Object System.Drawing.Size(130, 28)
+    $oben.Controls.Add($btnSuche)
+
+    $script:AvPfad = New-Object System.Windows.Forms.Label
+    $script:AvPfad.Location = New-Object System.Drawing.Point(552, 14)
+    $script:AvPfad.Size = New-Object System.Drawing.Size(760, 20)
+    $script:AvPfad.Anchor = "Top, Left, Right"
+    $script:AvPfad.AutoEllipsis = $true
+    $script:AvPfad.ForeColor = $script:FarbeGrau
+    $oben.Controls.Add($script:AvPfad)
+
+    # ---- Statuszeile ----
+    $unten = New-Object System.Windows.Forms.Panel
+    $unten.Dock = "Bottom"; $unten.Height = 26
+    $script:AvStatus = New-Object System.Windows.Forms.Label
+    $script:AvStatus.Dock = "Fill"; $script:AvStatus.TextAlign = "MiddleLeft"
+    $script:AvStatus.Padding = New-Object System.Windows.Forms.Padding(10, 0, 0, 0)
+    $script:AvStatus.ForeColor = $script:FarbeGrau
+    $unten.Controls.Add($script:AvStatus)
+
+    # ---- Aufteilung: Ordner | Dokumente | Vorschau ----
+    $sc1 = New-Object System.Windows.Forms.SplitContainer
+    $sc1.Dock = "Fill"
+    $sc1.FixedPanel = "Panel1"
+    $sc2 = New-Object System.Windows.Forms.SplitContainer
+    $sc2.Dock = "Fill"
+    $sc2.FixedPanel = "Panel2"
+    $sc1.Panel2.Controls.Add($sc2)
+
+    $script:AvBaum = New-Object System.Windows.Forms.TreeView
+    $script:AvBaum.Dock = "Fill"
+    $script:AvBaum.HideSelection = $false
+    $script:AvBaum.Font = New-Object System.Drawing.Font("Segoe UI", 10)
+    $script:AvBaum.ItemHeight = 26
+    $script:AvBaum.BorderStyle = "None"
+    $sc1.Panel1.Controls.Add($script:AvBaum)
+
+    $script:AvBilder = New-Object System.Windows.Forms.ImageList
+    $script:AvBilder.ColorDepth = [System.Windows.Forms.ColorDepth]::Depth32Bit
+    $script:AvBilder.ImageSize = New-Object System.Drawing.Size($script:AvMiniB, $script:AvMiniH)
+
+    $script:AvListe = New-Object System.Windows.Forms.ListView
+    $script:AvListe.Dock = "Fill"
+    $script:AvListe.View = "LargeIcon"
+    $script:AvListe.LargeImageList = $script:AvBilder
+    $script:AvListe.MultiSelect = $true
+    $script:AvListe.HideSelection = $false
+    $script:AvListe.ShowItemToolTips = $true
+    $script:AvListe.BorderStyle = "None"
+    $script:AvListe.BackColor = [System.Drawing.Color]::White
+    $script:AvListe.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+    $sc2.Panel1.Controls.Add($script:AvListe)
+
+    # Vorschau rechts
+    $vp = $sc2.Panel2
+    $vp.BackColor = $script:FarbeFlaeche
+    $script:AvName = New-Object System.Windows.Forms.Label
+    $script:AvName.Dock = "Top"; $script:AvName.Height = 30
+    $script:AvName.TextAlign = "MiddleLeft"; $script:AvName.AutoEllipsis = $true
+    $script:AvName.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 10)
+    $script:AvName.Padding = New-Object System.Windows.Forms.Padding(8, 0, 0, 0)
+
+    $script:AvGross = New-Object System.Windows.Forms.PictureBox
+    $script:AvGross.Dock = "Fill"
+    $script:AvGross.SizeMode = "Zoom"
+    $script:AvGross.BackColor = $script:FarbeFlaeche
+
+    $leiste = New-Object System.Windows.Forms.Panel
+    $leiste.Dock = "Bottom"; $leiste.Height = 44
+    $script:AvZurueck = New-Object System.Windows.Forms.Button
+    $script:AvZurueck.Text = [string][char]0x25C0
+    $script:AvZurueck.Location = New-Object System.Drawing.Point(8, 8); $script:AvZurueck.Size = New-Object System.Drawing.Size(40, 28)
+    $script:AvSeite = New-Object System.Windows.Forms.Label
+    $script:AvSeite.Location = New-Object System.Drawing.Point(52, 13); $script:AvSeite.Size = New-Object System.Drawing.Size(130, 20)
+    $script:AvSeite.TextAlign = "MiddleCenter"
+    $script:AvVor = New-Object System.Windows.Forms.Button
+    $script:AvVor.Text = [string][char]0x25B6
+    $script:AvVor.Location = New-Object System.Drawing.Point(186, 8); $script:AvVor.Size = New-Object System.Drawing.Size(40, 28)
+    $btnAuf = New-Object System.Windows.Forms.Button
+    $btnAuf.Text = "$([char]0x00D6)ffnen"
+    $btnAuf.Location = New-Object System.Drawing.Point(240, 8); $btnAuf.Size = New-Object System.Drawing.Size(90, 28)
+    $btnDruck = New-Object System.Windows.Forms.Button
+    $btnDruck.Text = "Drucken"
+    $btnDruck.Location = New-Object System.Drawing.Point(336, 8); $btnDruck.Size = New-Object System.Drawing.Size(90, 28)
+    $leiste.Controls.AddRange(@($script:AvZurueck, $script:AvSeite, $script:AvVor, $btnAuf, $btnDruck))
+
+    $vp.Controls.Add($script:AvGross)
+    $vp.Controls.Add($leiste)
+    $vp.Controls.Add($script:AvName)
+
+    $f.Controls.Add($sc1)
+    $f.Controls.Add($unten)
+    $f.Controls.Add($oben)
+
+    # ---- Ordnerbaum fuellen ----
+    $statusPfad = if ($StatusOrdner -and $StatusOrdner -ne "-") { $StatusOrdner.TrimEnd('\') } else { "" }
+    $script:AvStatusPfad = $statusPfad
+    $ersterKnoten = $null
+    if ($ShopOrdner -and (Test-Path -LiteralPath $ShopOrdner -ErrorAction SilentlyContinue)) {
+        $ersterKnoten = Av-NeuerKnoten "Shop" $ShopOrdner.TrimEnd('\')
+        [void]$script:AvBaum.Nodes.Add($ersterKnoten)
+    }
+    if ($MitarbeiterOrdner -and $MitarbeiterOrdner.Count -gt 0 -and $ZielBasis) {
+        $ma = New-Object System.Windows.Forms.TreeNode("Mitarbeiter")
+        $ma.Tag = ""
+        foreach ($k in @($MitarbeiterOrdner.Keys | Sort-Object)) {
+            $o = "$($MitarbeiterOrdner[$k])".Trim()
+            if (-not $o) { continue }
+            [void]$ma.Nodes.Add((Av-NeuerKnoten $k (Join-Path $ZielBasis $o).TrimEnd('\')))
+        }
+        [void]$script:AvBaum.Nodes.Add($ma)
+        $ma.Expand()
+    }
+    if ($KassenOrdner -and $KassenOrdner.Trim() -ne "-" -and (Test-Path -LiteralPath $KassenOrdner -ErrorAction SilentlyContinue)) {
+        [void]$script:AvBaum.Nodes.Add((Av-NeuerKnoten "Kasse" $KassenOrdner.TrimEnd('\')))
+    }
+    if ($LokalerOrdner -and (Test-Path -LiteralPath $LokalerOrdner -ErrorAction SilentlyContinue)) {
+        [void]$script:AvBaum.Nodes.Add((Av-NeuerKnoten "Nur auf diesem PC" $LokalerOrdner.TrimEnd('\')))
+    }
+
+    $script:AvBaum.Add_BeforeExpand({
+        param($s, $e)
+        $n = $e.Node
+        if ($n.Nodes.Count -eq 1 -and $null -eq $n.Nodes[0].Tag -and $n.Tag) {
+            $n.Nodes.Clear()
+            try {
+                foreach ($d in @([System.IO.Directory]::GetDirectories([string]$n.Tag) | Sort-Object)) {
+                    if ($script:AvStatusPfad -and $d.Equals($script:AvStatusPfad, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+                    try { if (([System.IO.File]::GetAttributes($d) -band [System.IO.FileAttributes]::Hidden)) { continue } } catch {}
+                    [void]$n.Nodes.Add((Av-NeuerKnoten ([System.IO.Path]::GetFileName($d)) $d))
+                }
+            } catch {}
+        }
+    })
+    $script:AvBaum.Add_AfterSelect({
+        param($s, $e)
+        $f.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
+        try { Av-LadeOrdner ([string]$e.Node.Tag) } finally { $f.Cursor = [System.Windows.Forms.Cursors]::Default }
+    })
+
+    # ---- Miniaturen nach und nach laden (Fenster bleibt bedienbar) ----
+    $script:AvMiniTimer = New-Object System.Windows.Forms.Timer
+    $script:AvMiniTimer.Interval = 15
+    $script:AvMiniTimer.Add_Tick({
+        $uhr = [System.Diagnostics.Stopwatch]::StartNew()
+        while ($uhr.ElapsedMilliseconds -lt 80) {
+            if ($script:AvNaechste -ge $script:AvListe.Items.Count) { $script:AvMiniTimer.Stop(); break }
+            $it = $script:AvListe.Items[$script:AvNaechste]
+            $schluessel = "m" + $script:AvNaechste
+            $script:AvNaechste++
+            $bild = Hole-Miniatur ([string]$it.Tag)
+            $mini = Rahme-Miniatur $bild
+            if ($bild) { $bild.Dispose() }
+            $script:AvBilder.Images.Add($schluessel, $mini)
+            $mini.Dispose()
+            $it.ImageKey = $schluessel
+        }
+    })
+
+    # ---- Vorschau bei Auswahl (kurz verzoegert, damit Pfeiltasten fluessig sind) ----
+    $script:AvAuswahlTimer = New-Object System.Windows.Forms.Timer
+    $script:AvAuswahlTimer.Interval = 250
+    $script:AvAuswahlTimer.Add_Tick({
+        $script:AvAuswahlTimer.Stop()
+        $m = @(Av-Markierte)
+        $p = if ($m.Count -gt 0) { $m[0] } else { $null }
+        if ($p -ne $script:AvSeitePfad) { Av-ZeigeSeite $p 0 }
+        $script:AvStatus.Text = $(if ($m.Count -gt 1) { "$($m.Count) markiert - Rechtsklick: zusammenfuegen" } elseif ($p) { $p } else { "$($script:AvListe.Items.Count) PDF(s)" })
+    })
+    $script:AvListe.Add_SelectedIndexChanged({ $script:AvAuswahlTimer.Stop(); $script:AvAuswahlTimer.Start() })
+    $script:AvZurueck.Add_Click({ if ($script:AvSeitePfad) { Av-ZeigeSeite $script:AvSeitePfad ($script:AvSeiteNr - 1) } })
+    $script:AvVor.Add_Click({ if ($script:AvSeitePfad) { Av-ZeigeSeite $script:AvSeitePfad ($script:AvSeiteNr + 1) } })
+    $script:AvGross.Add_DoubleClick({ if ($script:AvSeitePfad) { try { Start-Process -FilePath $script:AvSeitePfad } catch {} } })
+
+    $script:AvListe.Add_DoubleClick({ Av-Oeffnen })
+    $btnAuf.Add_Click({ Av-Oeffnen })
+    $btnDruck.Add_Click({
+        foreach ($p in (Av-Markierte | Select-Object -First 5)) {
+            try { Start-Process -FilePath $p -Verb Print } catch { [System.Windows.Forms.MessageBox]::Show("Drucken fehlgeschlagen: $($_.Exception.Message)", "DiNo1 Druck & Scan") | Out-Null }
+        }
+    })
+    $btnNeu.Add_Click({ Av-LadeOrdner $script:AvOrdner })
+    $btnSuche.Add_Click({ Zeige-Suche })
+    $script:AvFilterTimer = New-Object System.Windows.Forms.Timer
+    $script:AvFilterTimer.Interval = 400
+    $script:AvFilterTimer.Add_Tick({ $script:AvFilterTimer.Stop(); if ($script:AvOrdner) { Av-LadeOrdner $script:AvOrdner } })
+    $script:AvFilter.Add_TextChanged({ $script:AvFilterTimer.Stop(); $script:AvFilterTimer.Start() })
+
+    # PDFs aus der Ansicht herausziehen (z. B. in eine E-Mail oder einen Ordner)
+    $script:AvListe.Add_ItemDrag({
+        $p = [string[]](Av-Markierte)
+        if ($p.Count -eq 0) { return }
+        $daten = New-Object System.Windows.Forms.DataObject([System.Windows.Forms.DataFormats]::FileDrop, $p)
+        [void]$script:AvListe.DoDragDrop($daten, [System.Windows.Forms.DragDropEffects]::Copy)
+    })
+
+    # ---- Rechtsklick-Menue ----
+    $cm = New-Object System.Windows.Forms.ContextMenuStrip
+    $miAuf = $cm.Items.Add("$([char]0x00D6)ffnen"); $miAuf.Add_Click({ Av-Oeffnen })
+    $miDruck = $cm.Items.Add("Drucken"); $miDruck.Add_Click({ $btnDruck.PerformClick() })
+    $miOrdner = $cm.Items.Add("Im Explorer zeigen")
+    $miOrdner.Add_Click({ $m = @(Av-Markierte); if ($m.Count -gt 0) { Start-Process -FilePath "explorer.exe" -ArgumentList "/select,`"$($m[0])`"" } })
+    $miUm = $cm.Items.Add("Umbenennen ...")
+    $miUm.Add_Click({
+        $m = @(Av-Markierte); if ($m.Count -ne 1) { return }
+        $p = $m[0]
+        $neuName = Frage-Text "Umbenennen" "Neuer Dateiname (ohne .pdf):" ([System.IO.Path]::GetFileNameWithoutExtension($p))
+        if ([string]::IsNullOrWhiteSpace($neuName)) { return }
+        try {
+            $abl = Ermittle-AblageFuerPfad $p
+            [void](Verschiebe-Dokument $p (Split-Path $p -Parent) $neuName $abl.Ziel $abl.Mitarbeiter)
+            Av-LadeOrdner $script:AvOrdner
+        } catch { [System.Windows.Forms.MessageBox]::Show("Umbenennen fehlgeschlagen: $($_.Exception.Message)", "DiNo1 Druck & Scan") | Out-Null }
+    })
+    $miZus = $cm.Items.Add("PDFs zusammenf$([char]0x00FC)gen ...")
+    $miZus.Add_Click({
+        $m = @(Av-Markierte)
+        Zeige-Zusammenfuegen $m
+        Av-LadeOrdner $script:AvOrdner
+    })
+    $cm.Add_Opening({
+        $n = @(Av-Markierte).Count
+        $miAuf.Enabled = ($n -gt 0); $miDruck.Enabled = ($n -gt 0); $miOrdner.Enabled = ($n -gt 0)
+        $miUm.Enabled = ($n -eq 1); $miZus.Enabled = ($n -ge 2)
+    })
+    $script:AvListe.ContextMenuStrip = $cm
+
+    $f.Add_KeyDown({
+        param($s, $e)
+        if ($e.KeyCode -eq "F5") { Av-LadeOrdner $script:AvOrdner; $e.Handled = $true }
+        elseif ($e.KeyCode -eq "Enter" -and $script:AvListe.Focused) { Av-Oeffnen; $e.Handled = $true }
+        elseif ($e.KeyCode -eq "PageDown" -and $script:AvVor.Enabled) { $script:AvVor.PerformClick(); $e.Handled = $true }
+        elseif ($e.KeyCode -eq "PageUp" -and $script:AvZurueck.Enabled) { $script:AvZurueck.PerformClick(); $e.Handled = $true }
+    })
+
+    $f.Add_Shown({
+        try { $sc1.SplitterDistance = 250 } catch {}
+        try { $sc2.SplitterDistance = [Math]::Max(300, $sc2.Width - 480) } catch {}
+        if ($ersterKnoten) { $script:AvBaum.SelectedNode = $ersterKnoten } else { Av-LadeOrdner "" }
+    })
+    $f.Add_FormClosed({
+        try { $script:AvMiniTimer.Stop(); $script:AvMiniTimer.Dispose() } catch {}
+        try { $script:AvAuswahlTimer.Stop(); $script:AvAuswahlTimer.Dispose() } catch {}
+        try { $script:AvFilterTimer.Stop(); $script:AvFilterTimer.Dispose() } catch {}
+        try { if ($script:AvGross.Image) { $script:AvGross.Image.Dispose() } } catch {}
+        try { $script:AvBilder.Dispose() } catch {}
+    })
+    [void]$f.ShowDialog()
+    $f.Dispose()
+}
+
 # ======================= TRAY-SYMBOL =======================
 
 $trayIcon = New-Object System.Windows.Forms.NotifyIcon
@@ -5949,6 +6423,8 @@ $menu = New-Object System.Windows.Forms.ContextMenuStrip
 $menuSuche = $menu.Items.Add("Dokumente suchen...")
 $menuSuche.Font = New-Object System.Drawing.Font($menuSuche.Font, [System.Drawing.FontStyle]::Bold)
 $menuSuche.Add_Click({ Zeige-Suche })
+$menuAnsehen = $menu.Items.Add("Dokumente ansehen (Vorschau wie PaperPort)...")
+$menuAnsehen.Add_Click({ Zeige-DokumenteAnsehen })
 $menuScan = $menu.Items.Add("Jetzt scannen")
 $menuScan.Add_Click({
     $timer.Stop()
@@ -6625,12 +7101,13 @@ function Zeige-Hauptfenster {
     $f.StartPosition = "CenterScreen"
     $f.BackColor = $script:FarbeFlaeche
     $f.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::None
-    $f.ClientSize = New-Object System.Drawing.Size(460, 702)
+    $breiteF = 676
+    $f.ClientSize = New-Object System.Drawing.Size($breiteF, 702)
 
     # ---- Kopfbereich: Logo + Titel ----
     $kopfFlaeche = New-Object System.Windows.Forms.Panel
     $kopfFlaeche.Location = New-Object System.Drawing.Point(0, 0)
-    $kopfFlaeche.Size = New-Object System.Drawing.Size(460, 118)
+    $kopfFlaeche.Size = New-Object System.Drawing.Size($breiteF, 118)
     $kopfFlaeche.BackColor = [System.Drawing.Color]::White
     $f.Controls.Add($kopfFlaeche)
 
@@ -6660,7 +7137,7 @@ function Zeige-Hauptfenster {
     $standort.Font = New-Object System.Drawing.Font("Segoe UI", 9.5)
     $standort.ForeColor = $script:FarbeText
     $standort.Location = New-Object System.Drawing.Point(($textLinks + 2), 66)
-    $standort.Size = New-Object System.Drawing.Size((450 - $textLinks), 20)
+    $standort.Size = New-Object System.Drawing.Size(($breiteF - 10 - $textLinks), 20)
     $kopfFlaeche.Controls.Add($standort)
 
     $version = New-Object System.Windows.Forms.Label
@@ -6669,12 +7146,12 @@ function Zeige-Hauptfenster {
     $version.Font = New-Object System.Drawing.Font("Segoe UI", 8.5)
     $version.ForeColor = $script:FarbeGrau
     $version.Location = New-Object System.Drawing.Point(($textLinks + 2), 86)
-    $version.Size = New-Object System.Drawing.Size((450 - $textLinks), 18)
+    $version.Size = New-Object System.Drawing.Size(($breiteF - 10 - $textLinks), 18)
     $kopfFlaeche.Controls.Add($version)
 
     $streifen = New-Object System.Windows.Forms.Panel
     $streifen.Location = New-Object System.Drawing.Point(0, 118)
-    $streifen.Size = New-Object System.Drawing.Size(460, 4)
+    $streifen.Size = New-Object System.Drawing.Size($breiteF, 4)
     $streifen.BackColor = $script:FarbeAkzent
     $f.Controls.Add($streifen)
 
@@ -6683,20 +7160,24 @@ function Zeige-Hauptfenster {
     $kacheln = @(
         @("Jetzt scannen",            0xE8FE, $menuScan,          $true),
         @("Dokumente suchen",         0xE721, $menuSuche,         $false),
+        @("Dokumente ansehen",        0xE890, $menuAnsehen,       $false),
         @("$($ue)bersprungene erfassen", 0xE81C, $menuUebersprungen, $false),
-        @("Ablage-Ordner $($oe)ffnen", 0xE838, $menuAblageOeffnen, $false),
         @("PDFs zusammenf$($ue)gen",   0xE8C8, $menuZusammen,      $false),
+        @("Alte Dokumente durchsuchbar", 0xE8F1, $menuAltbestand, $false),
         @("Tagesbericht",             0xE787, $menuBericht,       $false),
+        @("Admin: alle Shops",        0xE72E, $menuAdmin,         $false),
+        @("Ablage-Ordner $($oe)ffnen", 0xE838, $menuAblageOeffnen, $false),
         @("Ordner anpassen",          0xE713, $menuOrdner,        $false),
-        @("Nach Updates suchen",      0xE895, $menuUpdate,        $false)
+        @("Nach Updates suchen",      0xE895, $menuUpdate,        $false),
+        @("Diagnose erstellen",       0xE9D9, $menuDiagnose,      $false)
     )
     for ($i = 0; $i -lt $kacheln.Count; $i++) {
         $k = $kacheln[$i]
-        $x = 20 + ($i % 2) * 216
-        $y = 140 + [Math]::Floor($i / 2) * 86
+        $x = 20 + ($i % 3) * 216
+        $y = 140 + [Math]::Floor($i / 3) * 86
         $p = Neue-Kachel $f $x $y 204 74 $k[0] $k[1] $menueAktion "gross" $k[3]
         $p.Tag.Menue = $k[2]
-        if ($i -eq 2) { $script:HfUeberKachel = $p }
+        if ($i -eq 3) { $script:HfUeberKachel = $p }
     }
 
     # ---- Ordner direkt oeffnen ----
@@ -6720,7 +7201,7 @@ function Zeige-Hauptfenster {
         @("Lokal (PC)",  $LokalerOrdner, 0xE977)
     )
     for ($i = 0; $i -lt $ordnerKnoepfe.Count; $i++) {
-        $p = Neue-Kachel $f (20 + $i * 106) 512 98 66 $ordnerKnoepfe[$i][0] $ordnerKnoepfe[$i][2] $ordnerAktion "klein"
+        $p = Neue-Kachel $f (20 + $i * 161) 512 153 66 $ordnerKnoepfe[$i][0] $ordnerKnoepfe[$i][2] $ordnerAktion "klein"
         $p.Tag.Pfad = $ordnerKnoepfe[$i][1]
         $p.Tag.Auswahl = $null
         if ($i -eq 0 -and $MitarbeiterOrdner.Count -gt 0) {
@@ -6739,7 +7220,7 @@ function Zeige-Hauptfenster {
     }
 
     # ---- Status-Karte ----
-    $karte = Neue-Kachel $f 20 594 420 84 "" $null $null "karte"
+    $karte = Neue-Kachel $f 20 594 ($breiteF - 40) 84 "" $null $null "karte"
     $script:HfPunkte = @()
     $script:HfTexte = @()
     for ($i = 0; $i -lt 3; $i++) {
@@ -6757,7 +7238,7 @@ function Zeige-Hauptfenster {
         $tx.BackColor = [System.Drawing.Color]::Transparent
         $tx.ForeColor = $script:FarbeText
         $tx.Location = New-Object System.Drawing.Point(34, (11 + $i * 23))
-        $tx.Size = New-Object System.Drawing.Size(376, 20)
+        $tx.Size = New-Object System.Drawing.Size(($breiteF - 84), 20)
         $karte.Controls.Add($tx)
         $script:HfPunkte += $pu
         $script:HfTexte += $tx

@@ -429,3 +429,9 @@ NEU IN PAKET 17 (Version 17)
   gedruckte PDF keinen Text (z. B. Vertrag nur als Bild), wird sie vor dem
   Ablegen mit unsichtbarem Text neu aufgebaut (ca. 265 dpi). PDFs mit Text
   bleiben unveraendert. Abschalten: $script:DruckTexterkennung = $false.
+- Version 42: "Dokumente ansehen" wie PaperPort: links Ordner (Shop, Mitarbeiter,
+  Kasse, lokal), Mitte Seitenbilder der PDFs (Zwischenspeicher
+  C:\PaperPortErsatz\Miniaturen), rechts grosse Vorschau mit Blaettern, Oeffnen,
+  Drucken, Umbenennen, Zusammenfuegen, PDFs herausziehen (z. B. in E-Mails).
+  Programmfenster jetzt mit 12 Kacheln in 3 Spalten (u. a. Admin, Ansehen,
+  Alte Dokumente, Diagnose).
