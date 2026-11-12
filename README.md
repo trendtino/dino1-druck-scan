@@ -73,6 +73,7 @@ Jeder PC prüft beim Start und etwa alle 10 Minuten, ob sich der Programmcode de
 
 | Version | Neu |
 |---|---|
+| 28 | Zeitmessung je Scan im Log (Zeile „ZEITEN“) |
 | 27 | Ordner-Knöpfe (Mitarbeiter, Shop, Kasse, Lokal) im Programmfenster |
 | 26 | Doppelklick aufs Tray-Symbol öffnet das Programmfenster |
 | 25 | Anheften des Tray-Symbols erkennt alte Namen, Hinweis im Log |

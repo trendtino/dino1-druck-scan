@@ -244,7 +244,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "27"
+$script:WatcherVersion      = "28"
 $script:WatcherVersionDatum = "12.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -1951,6 +1951,9 @@ function Hole-WiaBild($item, [bool]$folgeseite) {
 # "eingefroren" - es wird zwischen den Seiten aktualisiert.
 $script:Fortschritt = $null
 $script:ScanStoppen = $false
+$script:ZeitOcr = 0.0
+$script:ZeitEinzugEnde = 0
+$script:ZeitSeiten = New-Object System.Collections.Generic.List[string]
 
 function Zeige-Fortschritt($titel, $text) {
     try {
@@ -2036,6 +2039,8 @@ function Scanne-MitEinzug($device, $item, $maxSeiten) {
     $weiter = $true
 
     $script:ScanStoppen = $false
+    $script:ZeitEinzugEnde = 0
+    $script:ZeitSeiten = New-Object System.Collections.Generic.List[string]
     $scanStart = Get-Date
     Setze-FortschrittStopp $true
     while ($weiter) {
@@ -2067,7 +2072,9 @@ function Scanne-MitEinzug($device, $item, $maxSeiten) {
         } catch {
             $hResult = $_.Exception.HResult
             if (-not $hResult -and $_.Exception.InnerException) { $hResult = $_.Exception.InnerException.HResult }
+            $script:ZeitEinzugEnde = [Math]::Round($zeitmesser.Elapsed.TotalSeconds, 1)
             if ($seitenNr -gt 0 -and ($hResult -eq $script:WIA_ERROR_PAPER_EMPTY -or $_.Exception.Message -match "0x80210003")) {
+                Schreibe-Log "Einzug leer gemeldet nach $($script:ZeitEinzugEnde)s."
                 break   # Einzug ist leer - alle Seiten wurden erfasst
             }
             if ($seitenNr -eq 0) { throw }
@@ -2075,7 +2082,7 @@ function Scanne-MitEinzug($device, $item, $maxSeiten) {
             break
         }
         if ($null -eq $bild) {
-            if ($seitenNr -gt 0) { break }   # kein weiteres Bild -> Einzug vermutlich leer
+            if ($seitenNr -gt 0) { $script:ZeitEinzugEnde = [Math]::Round($zeitmesser.Elapsed.TotalSeconds, 1); break }   # kein weiteres Bild -> Einzug vermutlich leer
             throw "Der Scanner hat kein Bild geliefert. Bitte als Farbe 'Graustufen' oder 'Farbe' statt 'Schwarzweiss' waehlen oder einen anderen Eintrag fuer diesen Scanner nehmen (z.B. '... LAN' statt '... series' - das ist der Herstellertreiber). Details im Log."
         }
         $transferSekunden = [Math]::Round($zeitmesser.Elapsed.TotalSeconds, 1)
@@ -2086,7 +2093,10 @@ function Scanne-MitEinzug($device, $item, $maxSeiten) {
         $bild.SaveFile($tempBild)
         [void]$ergebnisDateien.Add($tempBild)
         $speichernSekunden = [Math]::Round($zeitmesser.Elapsed.TotalSeconds, 1)
-        Schreibe-Log "Seite $seitenNr erfasst: $tempBild (Scan/Transfer: ${transferSekunden}s, Speichern: ${speichernSekunden}s)"
+        $groesseMB = 0
+        try { $groesseMB = [Math]::Round((Get-Item $tempBild).Length / 1MB, 1) } catch {}
+        [void]$script:ZeitSeiten.Add("${transferSekunden}s")
+        Schreibe-Log "Seite $seitenNr erfasst: $tempBild (Scan/Transfer: ${transferSekunden}s, Speichern: ${speichernSekunden}s, ${groesseMB} MB, $($bild.Width)x$($bild.Height) Pixel)"
         Zeige-Fortschritt "Seite $seitenNr erfasst" "Bisher erfasst: $seitenNr Seite(n)  -  $([Math]::Round(((Get-Date) - $scanStart).TotalSeconds)) s`nPruefe, ob noch Papier im Einzug liegt ..."
     }
     Setze-FortschrittStopp $false
@@ -2250,7 +2260,9 @@ function Erzeuge-ScanPdf($seitenDateien, $dpiX, $dpiY, $schwarzweiss) {
         # Texterkennung: unsichtbarer Text ueber dem Scan (durchsuchbare PDF)
         $ebene = $null
         if ($mitOcr) {
+            $ocrUhr = [System.Diagnostics.Stopwatch]::StartNew()
             $erkannt = Erkenne-Text $f
+            $script:ZeitOcr += $ocrUhr.Elapsed.TotalSeconds
             if ($erkannt -and $erkannt.Woerter.Count -gt 0) {
                 try {
                     $ebene = [PpePdf]::TextEbene([string[]]$erkannt.Woerter, [double[]]$erkannt.X, [double[]]$erkannt.Y, [double[]]$erkannt.W, [double[]]$erkannt.H, $x, $y, [int]$seite.Hoehe)
@@ -2330,6 +2342,11 @@ function Starte-Scan {
         Schreibe-Log "Gewaehlter Scanner: '$($optionen.Scanner.Anzeige)' -> Geraet '$($optionen.Scanner.GeraeteName)'"
 
         Zeige-Fortschritt "Verbinde mit Scanner ..." "$($optionen.Scanner.Anzeige)"
+        $phasenUhr = [System.Diagnostics.Stopwatch]::StartNew()
+        $gesamtUhr = [System.Diagnostics.Stopwatch]::StartNew()
+        $script:ZeitEinzugEnde = 0
+        $script:ZeitSeiten = New-Object System.Collections.Generic.List[string]
+        $script:ZeitOcr = 0.0
         $scanner = Verbinde-Scanner $optionen.Scanner.DeviceID
         $script:ScannerFaehigkeiten[$optionen.Scanner.DeviceID] = $scanner.Faehigkeiten
         if ($optionen.Quelle -eq "Einzug" -and -not $scanner.HatEinzug) {
@@ -2345,6 +2362,8 @@ function Starte-Scan {
         $script:LetzteScanDpiX = 0
         $script:LetzteScanDpiY = 0
         Wende-ScanOptionenAn $scanner.Device $scanner.Item $optionen
+        $zeitVerbinden = [Math]::Round($phasenUhr.Elapsed.TotalSeconds, 1)
+        $phasenUhr.Restart()
 
         if ($optionen.Quelle -eq "Einzug") {
             $maxSeiten = [int]$MaxSeitenProScan
@@ -2353,6 +2372,8 @@ function Starte-Scan {
         } else {
             $seitenDateien = Scanne-VonFlachbett $scanner.Item
         }
+        $zeitScanner = [Math]::Round($phasenUhr.Elapsed.TotalSeconds, 1)
+        $phasenUhr.Restart()
 
         if ($seitenDateien.Count -eq 0) {
             Schreibe-Log "Scan abgebrochen (keine Seiten erfasst)."
@@ -2371,6 +2392,8 @@ function Starte-Scan {
             [void]$gruppen.Add($seitenDateien)
         }
 
+        $zeitLeer = [Math]::Round($phasenUhr.Elapsed.TotalSeconds, 1)
+        $phasenUhr.Restart()
         $script:LetzteScanFarbe = $optionen.Farbe
         try {
             $teil = 0
@@ -2379,6 +2402,11 @@ function Starte-Scan {
                 $script:ScanTeilNr = if ($gruppen.Count -gt 1) { $teil } else { 0 }
                 Lege-ScanAb $gruppe $script:LetzteScanDpiX $script:LetzteScanDpiY "Jetzt scannen"
             }
+            $zeitPdf = [Math]::Round($phasenUhr.Elapsed.TotalSeconds, 1)
+            $zeitOcr = [Math]::Round($script:ZeitOcr, 1)
+            Schreibe-Log ("ZEITEN ($($optionen.Farbe), $($optionen.Dpi) dpi angefordert, $($script:LetzteScanDpiX) dpi erhalten, $($seitenDateien.Count) Seite(n)): " +
+                "Verbinden+Einstellen ${zeitVerbinden}s | Scanner ${zeitScanner}s (je Seite: $($script:ZeitSeiten -join ', '); Warten auf Einzug-Ende $($script:ZeitEinzugEnde)s) | " +
+                "Leere Seiten pruefen ${zeitLeer}s | PDF ${zeitPdf}s (davon Texterkennung ${zeitOcr}s) | gesamt $([Math]::Round($gesamtUhr.Elapsed.TotalSeconds, 1))s")
         } finally {
             $script:LetzteScanFarbe = ""
             $script:ScanTeilNr = 0

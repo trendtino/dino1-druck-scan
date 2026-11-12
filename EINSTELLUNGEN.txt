@@ -1,4 +1,4 @@
-DiNo1 Druck & Scan - Uebersicht ALLER Einstellungen (Paket 27)
+DiNo1 Druck & Scan - Uebersicht ALLER Einstellungen (Paket 28)
 ================================================================
 Installation von Dino1 GmbH und Andre Meschke
 
@@ -355,3 +355,6 @@ NEU IN PAKET 17 (Version 17)
   (Jetzt scannen, Dokumente suchen, ...) statt sofort zu scannen.
 - Version 27: Programmfenster hat Knoepfe zum Oeffnen von Mitarbeiter-
   (Auswahl je Mitarbeiter), Shop-, Kassen- und lokalem Ordner.
+- Version 28: Nach jedem Scan steht eine Zeile "ZEITEN (...)" im Log: wie
+  lange Verbinden, Scanner (je Seite), Warten auf das Einzug-Ende, Pruefen
+  auf leere Seiten und PDF/Texterkennung gedauert haben.
