@@ -244,7 +244,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "26"
+$script:WatcherVersion      = "27"
 $script:WatcherVersionDatum = "12.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -4014,10 +4014,11 @@ function Zeige-Hauptfenster {
     $f.FormBorderStyle = "FixedSingle"
     $f.MaximizeBox = $false
     $f.StartPosition = "CenterScreen"
-    $f.ClientSize = New-Object System.Drawing.Size(420, 330)
+    $f.ClientSize = New-Object System.Drawing.Size(420, 410)
 
     $kopf = New-Object System.Windows.Forms.Label
     $kopf.Text = "DiNo1 Druck & Scan"
+    $kopf.UseMnemonic = $false
     $kopf.Font = New-Object System.Drawing.Font("Segoe UI", 14, [System.Drawing.FontStyle]::Bold)
     $kopf.Location = New-Object System.Drawing.Point(20, 12)
     $kopf.AutoSize = $true
@@ -4049,8 +4050,51 @@ function Zeige-Hauptfenster {
     [void](& $knopf "Ordner anpassen" 20 196 $menuOrdner)
     [void](& $knopf "Nach Updates suchen" 220 196 $menuUpdate)
 
+    # ---- Ordner direkt oeffnen ----
+    $grp = New-Object System.Windows.Forms.GroupBox
+    $grp.Text = "Ordner oeffnen"
+    $grp.Location = New-Object System.Drawing.Point(20, 254)
+    $grp.Size = New-Object System.Drawing.Size(380, 62)
+    $f.Controls.Add($grp)
+    $oeffneOrdner = {
+        $pfad = [string]$this.Tag
+        if (-not $pfad) { return }
+        if (-not (Test-Path $pfad -ErrorAction SilentlyContinue)) {
+            if ($pfad -eq $LokalerOrdner) { try { New-Item -ItemType Directory -Path $pfad -Force | Out-Null } catch {} }
+        }
+        if (Test-Path $pfad -ErrorAction SilentlyContinue) { Start-Process -FilePath "explorer.exe" -ArgumentList "`"$pfad`"" }
+        else { [System.Windows.Forms.MessageBox]::Show("Der Ordner ist gerade nicht erreichbar:`n$pfad", "Ordner oeffnen") | Out-Null }
+    }
+    $ordnerKnoepfe = @(@("Mitarbeiter", $ZielBasis), @("Shop", $ShopOrdner), @("Kasse", $KassenOrdner), @("Lokal (PC)", $LokalerOrdner))
+    for ($i = 0; $i -lt $ordnerKnoepfe.Count; $i++) {
+        $b = New-Object System.Windows.Forms.Button
+        $b.Text = $ordnerKnoepfe[$i][0]
+        $b.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+        $b.Location = New-Object System.Drawing.Point((10 + $i * 91), 22)
+        $b.Size = New-Object System.Drawing.Size(86, 30)
+        $b.Tag = $ordnerKnoepfe[$i][1]
+        if ($i -eq 0 -and $MitarbeiterOrdner.Count -gt 0) {
+            # Mitarbeiter: Auswahl, welcher Ordner
+            $auswahl = New-Object System.Windows.Forms.ContextMenuStrip
+            $alle = $auswahl.Items.Add("Alle Mitarbeiter-Ordner")
+            $alle.Tag = $ZielBasis
+            $alle.Add_Click($oeffneOrdner)
+            [void]$auswahl.Items.Add("-")
+            foreach ($k in $MitarbeiterOrdner.Keys) {
+                $e = $auswahl.Items.Add($k)
+                $e.Tag = Join-Path $ZielBasis $MitarbeiterOrdner[$k]
+                $e.Add_Click($oeffneOrdner)
+            }
+            $b.Tag = $auswahl
+            $b.Add_Click({ $this.Tag.Show($this, 0, $this.Height) })
+        } else {
+            $b.Add_Click($oeffneOrdner)
+        }
+        $grp.Controls.Add($b)
+    }
+
     $script:HfStatus = New-Object System.Windows.Forms.Label
-    $script:HfStatus.Location = New-Object System.Drawing.Point(22, 260)
+    $script:HfStatus.Location = New-Object System.Drawing.Point(22, 330)
     $script:HfStatus.Size = New-Object System.Drawing.Size(380, 60)
     $f.Controls.Add($script:HfStatus)
 

@@ -1,4 +1,4 @@
-DiNo1 Druck & Scan - Uebersicht ALLER Einstellungen (Paket 26)
+DiNo1 Druck & Scan - Uebersicht ALLER Einstellungen (Paket 27)
 ================================================================
 Installation von Dino1 GmbH und Andre Meschke
 
@@ -353,3 +353,5 @@ NEU IN PAKET 17 (Version 17)
   ein HINWEIS mit den gefundenen Eintraegen im Log.
 - Version 26: Doppelklick auf das Tray-Symbol oeffnet das Programmfenster
   (Jetzt scannen, Dokumente suchen, ...) statt sofort zu scannen.
+- Version 27: Programmfenster hat Knoepfe zum Oeffnen von Mitarbeiter-
+  (Auswahl je Mitarbeiter), Shop-, Kassen- und lokalem Ordner.
