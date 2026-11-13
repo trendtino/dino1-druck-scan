@@ -244,7 +244,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "52"
+$script:WatcherVersion      = "53"
 $script:WatcherVersionDatum = "12.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -6284,7 +6284,19 @@ function Av-SetzeListenArt {
     } else {
         $script:AvMiniTimer.Stop()
         $l.View = "Details"
+        Av-PasseSpaltenAn
     }
+}
+
+# Spalte "Name" fuellt die Breite, Datum und Ablage bleiben ganz lesbar
+function Av-PasseSpaltenAn {
+    try {
+        $l = $script:AvListe
+        if ($l.View -ne "Details" -or $l.Columns.Count -lt 3) { return }
+        $l.Columns[1].Width = 120
+        $l.Columns[2].Width = 190
+        $l.Columns[0].Width = [Math]::Max(200, $l.ClientSize.Width - 120 - 190 - 4)
+    } catch {}
 }
 
 function Av-MiniTick {
@@ -6986,13 +6998,16 @@ function Zeige-DokumenteAnsehen {
     $script:AvChkBilder.Checked = $script:AvMitBildern
     $oben.Controls.Add($script:AvChkBilder)
 
+    # Ordnerpfad in eigener Zeile ueber die ganze Breite (oben war er abgeschnitten)
     $script:AvPfad = New-Object System.Windows.Forms.Label
-    $script:AvPfad.Location = New-Object System.Drawing.Point(750, 14)
-    $script:AvPfad.Size = New-Object System.Drawing.Size(700, 20)
-    $script:AvPfad.Anchor = "Top, Left, Right"
+    $script:AvPfad.Dock = "Top"; $script:AvPfad.Height = 24
+    $script:AvPfad.TextAlign = "MiddleLeft"
+    $script:AvPfad.Padding = New-Object System.Windows.Forms.Padding(12, 0, 8, 0)
     $script:AvPfad.AutoEllipsis = $true
+    $script:AvPfad.UseMnemonic = $false
+    $script:AvPfad.Font = New-Object System.Drawing.Font("Segoe UI", 9.5)
     $script:AvPfad.ForeColor = $script:FarbeGrau
-    $oben.Controls.Add($script:AvPfad)
+    $script:AvPfad.BackColor = $script:FarbeFlaeche
 
     # ---- Statuszeile ----
     $unten = New-Object System.Windows.Forms.Panel
@@ -7032,6 +7047,7 @@ function Zeige-DokumenteAnsehen {
     [void]$script:AvListe.Columns.Add("Datum", 120)
     [void]$script:AvListe.Columns.Add("Ablage / Gr$([char]0x00F6)$([char]0x00DF)e", 170)
     $script:AvListe.LargeImageList = $script:AvBilder
+    $script:AvListe.Add_Resize({ Av-PasseSpaltenAn })
     $script:AvListe.MultiSelect = $true
     $script:AvListe.HideSelection = $false
     $script:AvListe.ShowItemToolTips = $true
@@ -7105,6 +7121,7 @@ function Zeige-DokumenteAnsehen {
 
     $f.Controls.Add($sc1)
     $f.Controls.Add($unten)
+    $f.Controls.Add($script:AvPfad)
     $f.Controls.Add($oben)
 
     # ---- Ordnerbaum fuellen ----
@@ -7360,7 +7377,8 @@ function Zeige-DokumenteAnsehen {
         $script:AvFilter.Focus()
         Av-SetzeListenArt
         try { $sc1.SplitterDistance = 250 } catch {}
-        try { $sc2.SplitterDistance = [Math]::Max(300, $sc2.Width - 520) } catch {}
+        try { $sc2.SplitterDistance = [Math]::Max(300, $sc2.Width - 430) } catch {}
+        Av-PasseSpaltenAn
         if ($ersterKnoten) { $script:AvBaum.SelectedNode = $ersterKnoten } else { Av-LadeOrdner "" }
     })
     $f.Add_FormClosing({ try { Av-FrageSpeichern } catch {} })

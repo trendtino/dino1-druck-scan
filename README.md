@@ -89,6 +89,7 @@ Jeder PC prüft beim Start und etwa alle 10 Minuten, ob sich der Programmcode de
 | 50 | Fix: Druck-Texterkennung, Altbestand und Drehen ("Argumenttypen stimmen nicht ueberein") |
 | 51 | Ansicht: nur Vertraege/Mitarbeiter/Kasse/Lokal, Suche nur Vertraege + Mitarbeiter, Miniaturen im Hintergrund |
 | 52 | Ansicht: Schalter "Seitenbilder" (aus = schnelle Liste) |
+| 53 | Ansicht: Pfad eigene Zeile, Vorschau schmaler, Spalten passen sich an |
 | 37 | Admin-Übersicht nur auf freigeschalteten PCs |
 | 36 | Ein Ordner `DiNo1-Druck-Scan` je Shop für alles; Admin-Übersicht aller Shops (Nutzer + Tagesberichte, Abendmeldung) |
 | 35 | Zentrale Mitarbeiterliste, Selbstheilung (Wächter), Suche mit Vorschau/Verschieben/Umbenennen, PDFs zusammenfügen (Drag & Drop + automatisch), Tagesbericht, Altbestand durchsuchbar, Setup im neuen Design |

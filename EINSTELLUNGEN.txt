@@ -464,3 +464,5 @@ NEU IN PAKET 17 (Version 17)
 - Version 52: "Dokumente ansehen" hat oben den Schalter "Seitenbilder". Aus (Standard)
   = schnelle Liste mit Name, Datum, Ablage/Groesse; an = kleine Seitenbilder.
   Die Einstellung wird je PC gemerkt (Ansicht_Seitenbilder.txt).
+- Version 53: Ansicht: Ordnerpfad steht in eigener Zeile (ganz lesbar), Vorschau
+  rechts schmaler, Listen-Spalten passen sich der Breite an.
