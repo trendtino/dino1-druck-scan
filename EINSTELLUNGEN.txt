@@ -453,3 +453,7 @@ NEU IN PAKET 17 (Version 17)
   Bildern steht der komplette Dateiname (mehr Platz je Eintrag).
 - Version 47: Alle Ordner mit Treffern werden hellblau hinterlegt, der Ordner des
   markierten Treffers kraeftig blau. Der erste Treffer wird automatisch markiert.
+- Version 50: Fehler "Die Argumenttypen stimmen nicht ueberein" behoben. Er liess
+  die Texterkennung nach dem Drucken scheitern (Fenster kam immer wieder, Datei
+  landete bei "Uebersprungene"), ebenso "Alte Dokumente durchsuchbar machen"
+  und das Drehen. Scheitert die Texterkennung, wird trotzdem abgelegt.

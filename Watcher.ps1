@@ -244,7 +244,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "49"
+$script:WatcherVersion      = "50"
 $script:WatcherVersionDatum = "12.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -2776,8 +2776,13 @@ function Verarbeite-Ablage {
             # den Text direkt lesen koennen. PDFs mit Text bleiben unveraendert.
             $suchText = $(if ($vorschau) { [string]$vorschau.Text } else { "" })
             if ($OcrAktiv -and $script:DruckTexterkennung -and $eingabe.Ziel -ne "Lokal" -and -not (Pdf-HatText $datei.FullName)) {
-                $ocrText = Ergaenze-PdfText $datei.FullName
-                if ($ocrText) { $suchText = $ocrText }
+                try {
+                    $ocrText = Ergaenze-PdfText $datei.FullName
+                    if ($ocrText) { $suchText = $ocrText }
+                } catch {
+                    Schreibe-FehlerLog "bei der Texterkennung fuer den Druck - Ablage geht ohne Texterkennung weiter" $_
+                    try { Schliesse-Fortschritt } catch {}
+                }
             }
 
             # Teile wie "Thomas Meier 1" erst in den Unterordner "Teile_warten":
@@ -4538,8 +4543,25 @@ function Rendere-PdfSeiten($pdfPfad, [int]$breitePx = 1654, [int]$maxSeiten = 0)
     return ,$liste
 }
 
+# Anzahl Seiten einer Seitenliste (ohne @(...) - das scheitert unter
+# Windows PowerShell 5.1 bei manchen Listen mit "Die Argumenttypen stimmen
+# nicht ueberein").
+function Anzahl-Seiten($seiten) {
+    if ($null -eq $seiten) { return 0 }
+    try { return [int]$seiten.Count } catch { return 1 }
+}
+
 function Entferne-SeitenBilder($seiten) {
-    foreach ($s in @($seiten)) { if ($s -and $s.Png) { Remove-Item -Path $s.Png -Force -ErrorAction SilentlyContinue } }
+    if ($null -eq $seiten) { return }
+    try {
+        $n = Anzahl-Seiten $seiten
+        for ($i = 0; $i -lt $n; $i++) {
+            try {
+                $s = $seiten[$i]
+                if ($s -and $s.Png) { Remove-Item -LiteralPath ([string]$s.Png) -Force -ErrorAction SilentlyContinue }
+            } catch {}
+        }
+    } catch {}
 }
 
 # Kleines Vorschaubild der ersten Seite (fuer die Suche). Rueckgabe Bitmap oder $null.
@@ -4560,7 +4582,7 @@ function Hole-Vorschaubild($pdfPfad) {
     } catch {
         $bild = $null
     } finally {
-        if ($seiten) { Entferne-SeitenBilder $seiten }
+        try { Entferne-SeitenBilder $seiten } catch {}
     }
     if ($script:VorschauCache.Count -gt 40) {
         $script:VorschauCache.Clear()   # Bilder nicht selbst freigeben - eins koennte gerade angezeigt werden
@@ -4614,7 +4636,7 @@ function Ergaenze-PdfText([string]$pfad) {
     try {
         Zeige-Fortschritt "Texterkennung ..." "Der Ausdruck enthaelt keinen Text - Text wird erkannt."
         $seiten = Rendere-PdfSeiten $pfad $script:DruckOcrBreitePx 0
-        if (-not $seiten -or @($seiten).Count -eq 0) { return "" }
+        if ((Anzahl-Seiten $seiten) -eq 0) { return "" }
         $text = Schreibe-PdfAusSeiten $seiten $temp "Texterkennung fuer den Ausdruck ..."
         if (-not $text -or -not $text.Trim()) {
             Remove-Item -Path $temp -Force -ErrorAction SilentlyContinue
@@ -4623,15 +4645,15 @@ function Ergaenze-PdfText([string]$pfad) {
         }
         Remove-Item -LiteralPath $pfad -Force -ErrorAction Stop
         Move-Item -Path $temp -Destination $pfad -ErrorAction Stop
-        Schreibe-Log "Texterkennung fuer Druck ergaenzt ($(@($seiten).Count) Seite(n)): $pfad"
+        Schreibe-Log "Texterkennung fuer Druck ergaenzt ($(Anzahl-Seiten $seiten) Seite(n)): $pfad"
         return $text
     } catch {
-        Schreibe-Log "HINWEIS: Texterkennung fuer Druck fehlgeschlagen: $($_.Exception.Message)"
-        Remove-Item -Path $temp -Force -ErrorAction SilentlyContinue
+        Schreibe-FehlerLog "bei der Texterkennung fuer den Druck (Datei bleibt unveraendert)" $_
+        try { Remove-Item -Path $temp -Force -ErrorAction SilentlyContinue } catch {}
         return ""
     } finally {
-        if ($seiten) { Entferne-SeitenBilder $seiten }
-        Schliesse-Fortschritt
+        try { Entferne-SeitenBilder $seiten } catch {}
+        try { Schliesse-Fortschritt } catch {}
     }
 }
 
@@ -4648,7 +4670,7 @@ function Schreibe-PdfAusSeiten($seiten, $zielPfad, [string]$fortschrittText = "P
     $gesamt = New-Object System.Text.StringBuilder
     $mitOcr = Initialisiere-Ocr
     $nr = 0
-    $anzahl = @($seiten).Count
+    $anzahl = Anzahl-Seiten $seiten
     foreach ($s in $seiten) {
         $nr++
         Zeige-Fortschritt $fortschrittText "Seite $nr von $anzahl$(if ($mitOcr) { ' (mit Texterkennung)' })"
@@ -4995,7 +5017,7 @@ function Fuehre-AltbestandIndexierungAus {
         } catch {
             $fehler++
         } finally {
-            if ($seiten) { Entferne-SeitenBilder $seiten }
+            try { Entferne-SeitenBilder $seiten } catch {}
         }
         if ($text.Length -gt 30000) { $text = $text.Substring(0, 30000) }
         $datum = ""
@@ -6247,7 +6269,7 @@ function Bearbeite-PdfSeiten([string]$pfad, $drehungen, [int]$loeschSeite = -1) 
         foreach ($s in $seiten) { [void]$liste.Add($s) }
         if ($liste.Count -eq 0) { throw "Die PDF enthaelt keine Seiten." }
         $nr = -1
-        foreach ($s in @($liste)) {
+        foreach ($s in $liste) {
             $nr++
             $q = 0
             if ($drehungen -and $drehungen.ContainsKey($nr)) { $q = [int]$drehungen[$nr] }
@@ -6277,7 +6299,7 @@ function Bearbeite-PdfSeiten([string]$pfad, $drehungen, [int]$loeschSeite = -1) 
         Schreibe-FehlerLog "beim Bearbeiten von $pfad" $_
         throw
     } finally {
-        if ($seiten) { Entferne-SeitenBilder $seiten }
+        try { Entferne-SeitenBilder $seiten } catch {}
         Remove-Item -Path $temp -Force -ErrorAction SilentlyContinue
         Schliesse-Fortschritt
     }
