@@ -244,7 +244,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "50"
+$script:WatcherVersion      = "51"
 $script:WatcherVersionDatum = "12.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -3579,9 +3579,25 @@ function Kopiere-SuchindexInShop {
 # Ordner, in denen gesucht wird: NUR der Shop-Ordner und die Ordner der
 # hier hinterlegten Mitarbeiter (nicht Kasse, nicht lokal, nicht der ganze
 # Mitarbeiter-Basisordner mit den Ordnern anderer Shops).
+# Unterordner "Vertraege" im Shop-Ordner (Schreibweise egal: Vertraege mit Umlaut,
+# Vertraege, Vertrage ...). Rueckgabe Pfad oder $null.
+function Get-VertraegeOrdner {
+    if ([string]::IsNullOrWhiteSpace($ShopOrdner)) { return $null }
+    try {
+        foreach ($d in [System.IO.Directory]::GetDirectories($ShopOrdner.Trim().TrimEnd('\'))) {
+            if ([System.IO.Path]::GetFileName($d) -match '^Vertr') { return $d.TrimEnd('\') }
+        }
+    } catch {}
+    return $null
+}
+
+# Gesucht wird nur in Shop\Vertraege und den Mitarbeiter-Ordnern (jeweils mit
+# Unterordnern). Gibt es keinen Ordner "Vertraege", wird der Shop-Ordner genommen.
 function Get-SuchOrdner {
     $liste = New-Object System.Collections.Generic.List[string]
-    if (-not [string]::IsNullOrWhiteSpace($ShopOrdner)) { [void]$liste.Add($ShopOrdner.Trim().TrimEnd('\')) }
+    $vertraege = Get-VertraegeOrdner
+    if ($vertraege) { [void]$liste.Add($vertraege) }
+    elseif (-not [string]::IsNullOrWhiteSpace($ShopOrdner)) { [void]$liste.Add($ShopOrdner.Trim().TrimEnd('\')) }
     if ($MitarbeiterOrdner -and -not [string]::IsNullOrWhiteSpace($ZielBasis)) {
         foreach ($k in @($MitarbeiterOrdner.Keys)) {
             $name = "$($MitarbeiterOrdner[$k])".Trim()
@@ -6029,22 +6045,36 @@ function Rendere-PdfSeite([string]$pdfPfad, [int]$index, [int]$breitePx) {
     }
 }
 
+# Dateiname im Miniatur-Zwischenspeicher (aendert sich, wenn die PDF sich aendert).
+# Muss mit der Berechnung in $script:MiniArbeit uebereinstimmen.
+function Miniatur-CacheDatei([string]$pfad) {
+    $fi = New-Object System.IO.FileInfo($pfad)
+    $schluessel = $fi.FullName.ToLowerInvariant() + "|" + $fi.LastWriteTimeUtc.Ticks + "|" + $fi.Length
+    $sha = [System.Security.Cryptography.SHA1]::Create()
+    try { $hash = ([BitConverter]::ToString($sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($schluessel)))).Replace("-", "") }
+    finally { $sha.Dispose() }
+    return (Join-Path $script:MiniaturOrdner ($hash + ".jpg"))
+}
+
+# Nur aus dem Zwischenspeicher (schnell). Rueckgabe Bitmap oder $null.
+function Lade-MiniaturAusCache([string]$pfad) {
+    try {
+        $cache = Miniatur-CacheDatei $pfad
+        if (-not [System.IO.File]::Exists($cache)) { return $null }
+        $ms = New-Object System.IO.MemoryStream(,[System.IO.File]::ReadAllBytes($cache))
+        $tmp = [System.Drawing.Image]::FromStream($ms)
+        $bmp = New-Object System.Drawing.Bitmap $tmp
+        $tmp.Dispose(); $ms.Dispose()
+        return $bmp
+    } catch { return $null }
+}
+
 # Kleines Bild der ersten Seite, mit Zwischenspeicher auf dem PC
 function Hole-Miniatur([string]$pfad) {
     try {
-        $fi = New-Object System.IO.FileInfo($pfad)
-        $schluessel = $fi.FullName.ToLowerInvariant() + "|" + $fi.LastWriteTimeUtc.Ticks + "|" + $fi.Length
-        $sha = [System.Security.Cryptography.SHA1]::Create()
-        $hash = ([BitConverter]::ToString($sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($schluessel)))).Replace("-", "")
-        $sha.Dispose()
-        $cache = Join-Path $script:MiniaturOrdner ($hash + ".jpg")
-        if (Test-Path $cache) {
-            $ms = New-Object System.IO.MemoryStream(,[System.IO.File]::ReadAllBytes($cache))
-            $tmp = [System.Drawing.Image]::FromStream($ms)
-            $bmp = New-Object System.Drawing.Bitmap $tmp
-            $tmp.Dispose(); $ms.Dispose()
-            return $bmp
-        }
+        $cache = Miniatur-CacheDatei $pfad
+        $bmp = Lade-MiniaturAusCache $pfad
+        if ($bmp) { return $bmp }
         $r = Rendere-PdfSeite $pfad 0 264
         if (-not $r) { return $null }
         try {
@@ -6092,6 +6122,211 @@ function Rahme-Miniatur($bild) {
     return $bmp
 }
 
+# Miniaturen werden in einem eigenen Hintergrund-Thread erzeugt (PDF holen,
+# erste Seite rendern, als JPG in den Zwischenspeicher). Das Fenster bleibt
+# dadurch auch bei Ordnern mit mehreren hundert PDFs fluessig. Auftraege kommen
+# ueber $z.Auftraege / $z.Vorrang (sichtbare zuerst), fertige Pfade gehen nach
+# $z.Fertig - das Fenster laedt sie dann aus dem Zwischenspeicher.
+$script:MiniArbeit = {
+    param($z, $cacheOrdner, $tempOrdner, [int]$breite)
+    try {
+        Add-Type -AssemblyName System.Drawing
+        Add-Type -AssemblyName System.Runtime.WindowsRuntime
+        $null = [Windows.Foundation.IAsyncOperation`1, Windows.Foundation, ContentType = WindowsRuntime]
+        $null = [Windows.Storage.StorageFile, Windows.Storage, ContentType = WindowsRuntime]
+        $null = [Windows.Storage.Streams.IRandomAccessStream, Windows.Storage.Streams, ContentType = WindowsRuntime]
+        $null = [Windows.Storage.Streams.InMemoryRandomAccessStream, Windows.Storage.Streams, ContentType = WindowsRuntime]
+        $null = [Windows.Data.Pdf.PdfDocument, Windows.Data.Pdf, ContentType = WindowsRuntime]
+        $null = [Windows.Data.Pdf.PdfPageRenderOptions, Windows.Data.Pdf, ContentType = WindowsRuntime]
+        $methoden = [System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 }
+        $asOp = $methoden | Where-Object { $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1' } | Select-Object -First 1
+        $asAkt = $methoden | Where-Object { $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncAction' } | Select-Object -First 1
+        if ($null -eq $asOp -or $null -eq $asAkt) { throw "AsTask nicht gefunden" }
+        if (-not [System.IO.Directory]::Exists($cacheOrdner)) { [void][System.IO.Directory]::CreateDirectory($cacheOrdner) }
+    } catch {
+        $z.Fehler = $_.Exception.Message
+        return
+    }
+    $z.Bereit = $true
+    $sha = [System.Security.Cryptography.SHA1]::Create()
+    $erledigt = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::OrdinalIgnoreCase)
+    while (-not $z.Abbrechen) {
+        $p = $null
+        if (-not $z.Vorrang.TryDequeue([ref]$p)) {
+            if (-not $z.Auftraege.TryDequeue([ref]$p)) { Start-Sleep -Milliseconds 120; continue }
+        }
+        if (-not $p) { continue }
+        if ($erledigt.Contains($p)) { $z.Fertig.Enqueue($p); continue }
+        [void]$erledigt.Add($p)
+        $kopie = $null; $seite = $null; $mem = $null; $netz = $null; $ms = $null; $bild = $null
+        try {
+            $fi = New-Object System.IO.FileInfo($p)
+            $schluessel = $fi.FullName.ToLowerInvariant() + "|" + $fi.LastWriteTimeUtc.Ticks + "|" + $fi.Length
+            $hash = ([BitConverter]::ToString($sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($schluessel)))).Replace("-", "")
+            $ziel = [System.IO.Path]::Combine($cacheOrdner, $hash + ".jpg")
+            if (-not [System.IO.File]::Exists($ziel)) {
+                $kopie = [System.IO.Path]::Combine($tempOrdner, "Mini_" + [guid]::NewGuid().ToString("N") + ".pdf")
+                [System.IO.File]::Copy($p, $kopie, $true)
+                $t = $asOp.MakeGenericMethod([Windows.Storage.StorageFile]).Invoke($null, @([Windows.Storage.StorageFile]::GetFileFromPathAsync($kopie)))
+                if (-not $t.Wait(60000)) { throw "Zeitueberschreitung" }
+                $datei = $t.Result
+                $t = $asOp.MakeGenericMethod([Windows.Data.Pdf.PdfDocument]).Invoke($null, @([Windows.Data.Pdf.PdfDocument]::LoadFromFileAsync($datei)))
+                if (-not $t.Wait(60000)) { throw "Zeitueberschreitung" }
+                $dok = $t.Result
+                if ([int]$dok.PageCount -ge 1) {
+                    $seite = $dok.GetPage([uint32]0)
+                    $mem = New-Object Windows.Storage.Streams.InMemoryRandomAccessStream
+                    $opt = New-Object Windows.Data.Pdf.PdfPageRenderOptions
+                    $opt.DestinationWidth = [uint32]$breite
+                    $t = $asAkt.Invoke($null, @($seite.RenderToStreamAsync($mem, $opt)))
+                    if (-not $t.Wait(60000)) { throw "Zeitueberschreitung" }
+                    $mem.Seek(0)
+                    $netz = [System.IO.WindowsRuntimeStreamExtensions]::AsStreamForRead($mem)
+                    $ms = New-Object System.IO.MemoryStream
+                    $netz.CopyTo($ms)
+                    $ms.Position = 0
+                    $bild = [System.Drawing.Image]::FromStream($ms)
+                    $tmpZiel = $ziel + "." + [guid]::NewGuid().ToString("N") + ".tmp"
+                    $bild.Save($tmpZiel, [System.Drawing.Imaging.ImageFormat]::Jpeg)
+                    try { [System.IO.File]::Move($tmpZiel, $ziel) } catch { try { [System.IO.File]::Delete($tmpZiel) } catch {} }
+                }
+            }
+        } catch {
+        } finally {
+            if ($bild) { try { $bild.Dispose() } catch {} }
+            if ($ms) { try { $ms.Dispose() } catch {} }
+            if ($netz) { try { $netz.Dispose() } catch {} }
+            if ($mem) { try { $mem.Dispose() } catch {} }
+            if ($seite) { try { $seite.Dispose() } catch {} }
+            if ($kopie) { try { [System.IO.File]::Delete($kopie) } catch {} }
+        }
+        $z.Fertig.Enqueue($p)
+    }
+    try { $sha.Dispose() } catch {}
+}
+
+# Hintergrund-Thread fuer Miniaturen starten (einmal je Fenster). $null wenn nicht moeglich.
+function Av-MiniArbeiter {
+    $m = $script:AvMini
+    if ($m) {
+        if ($m.Zustand.Fehler) { return $null }
+        return $m.Zustand
+    }
+    if ($script:AvMiniFehlgeschlagen) { return $null }
+    try {
+        $z = [hashtable]::Synchronized(@{
+            Abbrechen = $false; Bereit = $false; Fehler = ""
+            Auftraege = New-Object 'System.Collections.Concurrent.ConcurrentQueue[string]'
+            Vorrang   = New-Object 'System.Collections.Concurrent.ConcurrentQueue[string]'
+            Fertig    = New-Object 'System.Collections.Concurrent.ConcurrentQueue[string]'
+        })
+        $ps = [System.Management.Automation.PowerShell]::Create()
+        [void]$ps.AddScript($script:MiniArbeit.ToString())
+        [void]$ps.AddArgument($z)
+        [void]$ps.AddArgument([string]$script:MiniaturOrdner)
+        [void]$ps.AddArgument([string]$ScanTempOrdner)
+        [void]$ps.AddArgument(264)
+        $script:AvMini = @{ PS = $ps; Zustand = $z; Handle = $ps.BeginInvoke() }
+        return $z
+    } catch {
+        $script:AvMiniFehlgeschlagen = $true
+        Schreibe-FehlerLog "beim Start der Miniaturen im Hintergrund (es geht ohne weiter)" $_
+        return $null
+    }
+}
+
+function Av-StoppeMiniArbeiter {
+    $m = $script:AvMini
+    $script:AvMini = $null
+    if ($m) {
+        try { $m.Zustand.Abbrechen = $true } catch {}
+        try { [void]$m.PS.BeginStop($null, $null) } catch {}
+    }
+}
+
+# Neue Liste: offene Auftraege verwerfen
+function Av-LeereMiniAuftraege {
+    $script:AvMiniOffen = @{}
+    $script:AvMiniVorrang = @{}
+    $script:AvNaechste = 0
+    $m = $script:AvMini
+    if ($m) {
+        $x = $null
+        while ($m.Zustand.Auftraege.TryDequeue([ref]$x)) {}
+        while ($m.Zustand.Vorrang.TryDequeue([ref]$x)) {}
+        while ($m.Zustand.Fertig.TryDequeue([ref]$x)) {}
+    }
+}
+
+function Av-SetzeMiniatur($it, $bild) {
+    $mini = Rahme-Miniatur $bild
+    if ($bild) { $bild.Dispose() }
+    $k = "m" + [guid]::NewGuid().ToString("N")
+    $script:AvBilder.Images.Add($k, $mini)
+    $mini.Dispose()
+    $it.ImageKey = $k
+}
+
+function Av-MiniTick {
+    $uhr = [System.Diagnostics.Stopwatch]::StartNew()
+    $liste = $script:AvListe
+    $z = Av-MiniArbeiter
+    if ($null -eq $script:AvMiniOffen) { $script:AvMiniOffen = @{} }
+    # 1. Fertige aus dem Hintergrund anzeigen
+    if ($z) {
+        $p = $null
+        while ($uhr.ElapsedMilliseconds -lt 60 -and $z.Fertig.TryDequeue([ref]$p)) {
+            $it = $script:AvMiniOffen[$p]
+            if ($null -eq $it) { continue }
+            $script:AvMiniOffen.Remove($p)
+            if ($it.ListView -and $it.ImageKey -eq "_leer") {
+                $bild = Lade-MiniaturAusCache $p
+                if ($bild) { Av-SetzeMiniatur $it $bild }
+            }
+        }
+        # Sichtbare zuerst
+        try {
+            $oben = $liste.GetItemAt(40, 40)
+            if ($oben) {
+                $ende = [Math]::Min($liste.Items.Count, $oben.Index + 40)
+                for ($i = $oben.Index; $i -lt $ende; $i++) {
+                    $it = $liste.Items[$i]
+                    $pf = [string]$it.Tag
+                    if ($it.ImageKey -eq "_leer" -and $script:AvMiniOffen.ContainsKey($pf) -and -not $script:AvMiniVorrang.ContainsKey($pf)) {
+                        $script:AvMiniVorrang[$pf] = $true
+                        $z.Vorrang.Enqueue($pf)
+                    }
+                }
+            }
+        } catch {}
+    }
+    # Hintergrund ausgefallen: Offenes wie frueher hier erzeugen
+    if (-not $z -and $script:AvMiniOffen.Count -gt 0) {
+        foreach ($pf in [string[]]$script:AvMiniOffen.Keys) {
+            if ($uhr.ElapsedMilliseconds -ge 80) { break }
+            $it = $script:AvMiniOffen[$pf]
+            $script:AvMiniOffen.Remove($pf)
+            if ($it.ListView -and $it.ImageKey -eq "_leer") { Av-SetzeMiniatur $it (Hole-Miniatur $pf) }
+        }
+    }
+    # 2. Neue Eintraege: aus dem Zwischenspeicher oder als Auftrag
+    while ($uhr.ElapsedMilliseconds -lt 80 -and $script:AvNaechste -lt $liste.Items.Count) {
+        $it = $liste.Items[$script:AvNaechste]
+        $script:AvNaechste++
+        if ($it.ImageKey -ne "_leer") { continue }
+        $pf = [string]$it.Tag
+        $bild = Lade-MiniaturAusCache $pf
+        if ($bild) { Av-SetzeMiniatur $it $bild; continue }
+        if ($z) {
+            $script:AvMiniOffen[$pf] = $it
+            $z.Auftraege.Enqueue($pf)
+        } else {
+            Av-SetzeMiniatur $it (Hole-Miniatur $pf)   # ohne Hintergrund wie frueher
+        }
+    }
+    if ($script:AvNaechste -ge $liste.Items.Count -and $script:AvMiniOffen.Count -eq 0) { $script:AvMiniTimer.Stop() }
+}
+
 function Av-HatUnterordner([string]$pfad) {
     try { return [System.IO.Directory]::EnumerateDirectories($pfad).GetEnumerator().MoveNext() } catch { return $false }
 }
@@ -6133,7 +6368,7 @@ function Av-LadeOrdner([string]$ordner) {
     } finally {
         $liste.EndUpdate()
     }
-    $script:AvNaechste = 0
+    Av-LeereMiniAuftraege
     if ($liste.Items.Count -gt 0) { $script:AvMiniTimer.Start() }
     Av-ZeigeSeite $null 0
 }
@@ -6546,10 +6781,10 @@ function Av-StarteSuche {
     $script:AvBilder.Images.Clear()
     $script:AvBilder.Images.Add("_leer", (Rahme-Miniatur $null))
     $script:AvListe.EndUpdate()
-    $script:AvNaechste = 0
+    Av-LeereMiniAuftraege
     $script:AvOrdner = $null
     $script:AvSuchbegriff = $script:AvFilter.Text.Trim()
-    $script:AvPfad.Text = "Suchergebnis f$([char]0x00FC)r '$($script:AvSuchbegriff)' (Shop und Mitarbeiter)"
+    $script:AvPfad.Text = "Suchergebnis f$([char]0x00FC)r '$($script:AvSuchbegriff)' (Vertr$([char]0x00E4)ge und Mitarbeiter)"
     $zustand = [hashtable]::Synchronized(@{
         Abbrechen = $false; Fertig = $false; Fehler = ""; ZuViele = $false
         Status = "Suche laeuft ..."
@@ -6837,7 +7072,11 @@ function Zeige-DokumenteAnsehen {
     $statusPfad = if ($StatusOrdner -and $StatusOrdner -ne "-") { $StatusOrdner.TrimEnd('\') } else { "" }
     $script:AvStatusPfad = $statusPfad
     $ersterKnoten = $null
-    if ($ShopOrdner -and (Test-Path -LiteralPath $ShopOrdner -ErrorAction SilentlyContinue)) {
+    $vertraege = Get-VertraegeOrdner
+    if ($vertraege) {
+        $ersterKnoten = Av-NeuerKnoten "Shop Vertr$([char]0x00E4)ge" $vertraege
+        [void]$script:AvBaum.Nodes.Add($ersterKnoten)
+    } elseif ($ShopOrdner -and (Test-Path -LiteralPath $ShopOrdner -ErrorAction SilentlyContinue)) {
         $ersterKnoten = Av-NeuerKnoten "Shop" $ShopOrdner.TrimEnd('\')
         [void]$script:AvBaum.Nodes.Add($ersterKnoten)
     }
@@ -6895,21 +7134,11 @@ function Zeige-DokumenteAnsehen {
 
     # ---- Miniaturen nach und nach laden (Fenster bleibt bedienbar) ----
     $script:AvMiniTimer = New-Object System.Windows.Forms.Timer
-    $script:AvMiniTimer.Interval = 15
+    $script:AvMiniTimer.Interval = 40
+    $script:AvMiniVorrang = @{}
+    $script:AvMiniOffen = @{}
     $script:AvMiniTimer.Add_Tick({
-        $uhr = [System.Diagnostics.Stopwatch]::StartNew()
-        while ($uhr.ElapsedMilliseconds -lt 80) {
-            if ($script:AvNaechste -ge $script:AvListe.Items.Count) { $script:AvMiniTimer.Stop(); break }
-            $it = $script:AvListe.Items[$script:AvNaechste]
-            $schluessel = "m" + $script:AvNaechste
-            $script:AvNaechste++
-            $bild = Hole-Miniatur ([string]$it.Tag)
-            $mini = Rahme-Miniatur $bild
-            if ($bild) { $bild.Dispose() }
-            $script:AvBilder.Images.Add($schluessel, $mini)
-            $mini.Dispose()
-            $it.ImageKey = $schluessel
-        }
+        try { Av-MiniTick } catch { $script:AvMiniTimer.Stop(); Schreibe-FehlerLog "bei den Miniaturen" $_ }
     })
 
     # ---- Vorschau bei Auswahl (kurz verzoegert, damit Pfeiltasten fluessig sind) ----
@@ -7092,6 +7321,7 @@ function Zeige-DokumenteAnsehen {
     $f.Add_FormClosing({ try { Av-FrageSpeichern } catch {} })
     $f.Add_FormClosed({
         Av-StoppeSuche
+        Av-StoppeMiniArbeiter
         try { $script:AvSuchTimer.Dispose() } catch {}
         try { $script:AvMiniTimer.Stop(); $script:AvMiniTimer.Dispose() } catch {}
         try { $script:AvAuswahlTimer.Stop(); $script:AvAuswahlTimer.Dispose() } catch {}

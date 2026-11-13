@@ -457,3 +457,7 @@ NEU IN PAKET 17 (Version 17)
   die Texterkennung nach dem Drucken scheitern (Fenster kam immer wieder, Datei
   landete bei "Uebersprungene"), ebenso "Alte Dokumente durchsuchbar machen"
   und das Drehen. Scheitert die Texterkennung, wird trotzdem abgelegt.
+- Version 51: "Dokumente ansehen" zeigt links Shop Vertraege, Mitarbeiter, Kasse und
+  Nur auf diesem PC. Die Suche durchsucht nur Shop\Vertraege und die
+  Mitarbeiter-Ordner (mit Unterordnern). Die kleinen Seitenbilder werden im
+  Hintergrund erzeugt (sichtbare zuerst) - Ordner mit vielen PDFs gehen schneller.

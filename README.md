@@ -87,6 +87,7 @@ Jeder PC prüft beim Start und etwa alle 10 Minuten, ob sich der Programmcode de
 | 48 | Neues Admin-Passwort |
 | 49 | Admin-Passwort nur noch in einer Schreibweise |
 | 50 | Fix: Druck-Texterkennung, Altbestand und Drehen ("Argumenttypen stimmen nicht ueberein") |
+| 51 | Ansicht: nur Vertraege/Mitarbeiter/Kasse/Lokal, Suche nur Vertraege + Mitarbeiter, Miniaturen im Hintergrund |
 | 37 | Admin-Übersicht nur auf freigeschalteten PCs |
 | 36 | Ein Ordner `DiNo1-Druck-Scan` je Shop für alles; Admin-Übersicht aller Shops (Nutzer + Tagesberichte, Abendmeldung) |
 | 35 | Zentrale Mitarbeiterliste, Selbstheilung (Wächter), Suche mit Vorschau/Verschieben/Umbenennen, PDFs zusammenfügen (Drag & Drop + automatisch), Tagesbericht, Altbestand durchsuchbar, Setup im neuen Design |
