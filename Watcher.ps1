@@ -244,7 +244,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "53"
+$script:WatcherVersion      = "54"
 $script:WatcherVersionDatum = "12.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -5842,11 +5842,15 @@ function Zeige-AdminUebersicht([int]$startSeite = 0) {
         $g.Dock = "Fill"; $g.ReadOnly = $true; $g.AllowUserToAddRows = $false; $g.RowHeadersVisible = $false
         $g.SelectionMode = "FullRowSelect"; $g.MultiSelect = $false; $g.AutoSizeColumnsMode = "Fill"
         $g.BackgroundColor = [System.Drawing.Color]::White
+        # Spaltenkoepfe einzeilig und ganz lesbar (nicht abgeschnitten)
+        $g.ColumnHeadersDefaultCellStyle.WrapMode = [System.Windows.Forms.DataGridViewTriState]::False
+        $g.ColumnHeadersHeightSizeMode = "AutoSize"
         return $g
     }
     $gridN = & $neuesGrid
-    foreach ($s in @(@("Shop", 150), @("Standort", 110), @("PC", 100), @("Benutzer", 90), @("Version", 60), @("Zuletzt aktiv", 100), @("Heute abgelegt", 70), @("Gesamt abgelegt", 70), @("Hinweis", 160))) {
+    foreach ($s in @(@("Shop", 150), @("Standort", 110), @("PC", 100), @("Benutzer", 90), @("Version", 60), @("Zuletzt aktiv", 100), @("Heute abgelegt", 90), @("Gesamt abgelegt", 90), @("Hinweis", 140))) {
         $i = $gridN.Columns.Add($s[0], $s[0]); $gridN.Columns[$i].FillWeight = $s[1]
+        try { $gridN.Columns[$i].MinimumWidth = [System.Windows.Forms.TextRenderer]::MeasureText($s[0], $gridN.ColumnHeadersDefaultCellStyle.Font).Width + 24 } catch {}
     }
     $tabNutzer.Controls.Add($gridN)
 

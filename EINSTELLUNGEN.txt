@@ -466,3 +466,4 @@ NEU IN PAKET 17 (Version 17)
   Die Einstellung wird je PC gemerkt (Ansicht_Seitenbilder.txt).
 - Version 53: Ansicht: Ordnerpfad steht in eigener Zeile (ganz lesbar), Vorschau
   rechts schmaler, Listen-Spalten passen sich der Breite an.
+- Version 54: Admin-Uebersicht: Spaltenkoepfe (z. B. "Gesamt abgelegt") ganz lesbar.
