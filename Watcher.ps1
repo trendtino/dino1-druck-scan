@@ -244,7 +244,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "51"
+$script:WatcherVersion      = "52"
 $script:WatcherVersionDatum = "12.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -6267,7 +6267,28 @@ function Av-SetzeMiniatur($it, $bild) {
     $it.ImageKey = $k
 }
 
+# Seitenbilder an/aus (Andre: bei 200 PDFs dauert das Laden zu lange).
+# Aus = schnelle Liste mit Name, Datum, Ablage/Groesse. Wird je PC gemerkt.
+$script:AvBilderDatei = Join-Path $script:DatenOrdner "Ansicht_Seitenbilder.txt"
+function Lese-AvMitBildern {
+    try { if ([System.IO.File]::Exists($script:AvBilderDatei)) { return (([System.IO.File]::ReadAllText($script:AvBilderDatei)).Trim() -eq "1") } } catch {}
+    return $false
+}
+function Av-SetzeListenArt {
+    $l = $script:AvListe
+    if ($script:AvMitBildern) {
+        $l.View = "LargeIcon"
+        Setze-ListenAbstand $l 210 250
+        $script:AvNaechste = 0
+        if ($l.Items.Count -gt 0) { $script:AvMiniTimer.Start() }
+    } else {
+        $script:AvMiniTimer.Stop()
+        $l.View = "Details"
+    }
+}
+
 function Av-MiniTick {
+    if (-not $script:AvMitBildern) { $script:AvMiniTimer.Stop(); return }
     $uhr = [System.Diagnostics.Stopwatch]::StartNew()
     $liste = $script:AvListe
     $z = Av-MiniArbeiter
@@ -6362,6 +6383,8 @@ function Av-LadeOrdner([string]$ordner) {
             $it.ImageKey = "_leer"
             $it.Tag = $f.FullName
             $it.ToolTipText = $f.Name + "`n" + $f.LastWriteTime.ToString("dd.MM.yyyy HH:mm")
+            [void]$it.SubItems.Add($f.LastWriteTime.ToString("dd.MM.yyyy HH:mm"))
+            [void]$it.SubItems.Add(("{0:N0} KB" -f [Math]::Ceiling($f.Length / 1024)))
             [void]$liste.Items.Add($it)
         }
         $script:AvStatus.Text = "$gesamt PDF(s)" + $(if ($gesamt -gt 500) { " - die neuesten 500 werden angezeigt" } else { "" })
@@ -6837,6 +6860,10 @@ function Av-SucheTick {
         $it.Tag = $pfad
         $it.ToolTipText = ("Ablage: " + $wo + "`n" + [System.IO.Path]::GetDirectoryName($pfad) + "`n" + [string]$zeile[3])
         if (-not $zeile[5]) { $it.ForeColor = [System.Drawing.Color]::Gray }
+        $dat = [string]$zeile[0]
+        try { $dat = ([datetime]::ParseExact($dat.Substring(0, 10), "yyyy-MM-dd", $null)).ToString("dd.MM.yyyy") } catch {}
+        [void]$it.SubItems.Add($dat)
+        [void]$it.SubItems.Add($wo)
         [void]$script:AvListe.Items.Add($it)
         $s.Anzahl++
         Av-MerkeTrefferOrdner $pfad
@@ -6951,8 +6978,16 @@ function Zeige-DokumenteAnsehen {
     $btnNeu.Location = New-Object System.Drawing.Point(494, 4); $btnNeu.Height = 38
     $oben.Controls.Add($btnNeu)
 
+    $script:AvMitBildern = Lese-AvMitBildern
+    $script:AvChkBilder = New-Object System.Windows.Forms.CheckBox
+    $script:AvChkBilder.Text = "Seitenbilder"
+    $script:AvChkBilder.AutoSize = $true
+    $script:AvChkBilder.Location = New-Object System.Drawing.Point(638, 14)
+    $script:AvChkBilder.Checked = $script:AvMitBildern
+    $oben.Controls.Add($script:AvChkBilder)
+
     $script:AvPfad = New-Object System.Windows.Forms.Label
-    $script:AvPfad.Location = New-Object System.Drawing.Point(636, 14)
+    $script:AvPfad.Location = New-Object System.Drawing.Point(750, 14)
     $script:AvPfad.Size = New-Object System.Drawing.Size(700, 20)
     $script:AvPfad.Anchor = "Top, Left, Right"
     $script:AvPfad.AutoEllipsis = $true
@@ -6991,7 +7026,11 @@ function Zeige-DokumenteAnsehen {
 
     $script:AvListe = New-Object System.Windows.Forms.ListView
     $script:AvListe.Dock = "Fill"
-    $script:AvListe.View = "LargeIcon"
+    $script:AvListe.View = "Details"
+    $script:AvListe.FullRowSelect = $true
+    [void]$script:AvListe.Columns.Add("Name", 380)
+    [void]$script:AvListe.Columns.Add("Datum", 120)
+    [void]$script:AvListe.Columns.Add("Ablage / Gr$([char]0x00F6)$([char]0x00DF)e", 170)
     $script:AvListe.LargeImageList = $script:AvBilder
     $script:AvListe.MultiSelect = $true
     $script:AvListe.HideSelection = $false
@@ -7170,6 +7209,12 @@ function Zeige-DokumenteAnsehen {
     $script:AvGross.Add_DoubleClick({ if ($script:AvSeitePfad) { try { Start-Process -FilePath $script:AvSeitePfad } catch {} } })
 
     $script:AvListe.Add_DoubleClick({ Av-Oeffnen })
+    $script:AvTipps.SetToolTip($script:AvChkBilder, "Kleine Seitenbilder anzeigen. Aus = schnelle Liste (empfohlen bei vielen PDFs).")
+    $script:AvChkBilder.Add_CheckedChanged({
+        $script:AvMitBildern = $script:AvChkBilder.Checked
+        try { [System.IO.File]::WriteAllText($script:AvBilderDatei, $(if ($script:AvMitBildern) { "1" } else { "0" })) } catch {}
+        try { Av-SetzeListenArt } catch { Schreibe-FehlerLog "beim Umschalten der Seitenbilder" $_ }
+    })
     $btnAuf.Add_Click({ Av-Oeffnen })
     $btnDruck.Add_Click({
         foreach ($p in (Av-Markierte | Select-Object -First 5)) {
@@ -7313,7 +7358,7 @@ function Zeige-DokumenteAnsehen {
         $script:AvBtnSpeichern.FlatAppearance.BorderColor = $script:FarbeAkzent
         if ($script:SymbolSchrift) { $script:AvBtnSpeichern.Image = Zeichne-Symbol 0xE74E 18 ([System.Drawing.Color]::White) }
         $script:AvFilter.Focus()
-        Setze-ListenAbstand $script:AvListe 210 250
+        Av-SetzeListenArt
         try { $sc1.SplitterDistance = 250 } catch {}
         try { $sc2.SplitterDistance = [Math]::Max(300, $sc2.Width - 520) } catch {}
         if ($ersterKnoten) { $script:AvBaum.SelectedNode = $ersterKnoten } else { Av-LadeOrdner "" }

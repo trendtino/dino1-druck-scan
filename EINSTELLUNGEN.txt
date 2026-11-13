@@ -461,3 +461,6 @@ NEU IN PAKET 17 (Version 17)
   Nur auf diesem PC. Die Suche durchsucht nur Shop\Vertraege und die
   Mitarbeiter-Ordner (mit Unterordnern). Die kleinen Seitenbilder werden im
   Hintergrund erzeugt (sichtbare zuerst) - Ordner mit vielen PDFs gehen schneller.
+- Version 52: "Dokumente ansehen" hat oben den Schalter "Seitenbilder". Aus (Standard)
+  = schnelle Liste mit Name, Datum, Ablage/Groesse; an = kleine Seitenbilder.
+  Die Einstellung wird je PC gemerkt (Ansicht_Seitenbilder.txt).
