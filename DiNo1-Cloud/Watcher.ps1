@@ -218,6 +218,12 @@ public static extern bool ShowWindow(IntPtr hWnd, Int32 nCmdShow);
 '
 [Console.Window]::ShowWindow([Console.Window]::GetConsoleWindow(), 0) | Out-Null
 
+# Eigene Taskleisten-Kennung: sonst gruppiert Windows das Fenster unter PowerShell (PowerShell-Symbol unten)
+try {
+    Add-Type -Namespace DiNo1 -Name TaskApp -MemberDefinition '[System.Runtime.InteropServices.DllImport("shell32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)] public static extern int SetCurrentProcessExplicitAppUserModelID(string id);' -ErrorAction Stop
+    [void][DiNo1.TaskApp]::SetCurrentProcessExplicitAppUserModelID('DiNo1GmbH.DiNo1Cloud')
+} catch { }
+
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
@@ -249,7 +255,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "Cloud 20"
+$script:WatcherVersion      = "Cloud 21"
 $script:WatcherVersionDatum = "16.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
