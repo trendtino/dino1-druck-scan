@@ -255,7 +255,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "Cloud 29"
+$script:WatcherVersion      = "Cloud 30"
 $script:WatcherVersionDatum = "16.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -7013,6 +7013,29 @@ function Av-NurPdf($pfade, [string]$was) {
     }
     return $true
 }
+# Grosse Anzeige fuer Dateien ohne Vorschau (Word, Excel ...): Symbol, Name, Hinweis
+function Av-KeineVorschauBild([string]$pfad) {
+    $w = [Math]::Max(300, $script:AvGross.ClientSize.Width); $h = [Math]::Max(240, $script:AvGross.ClientSize.Height)
+    $bmp = New-Object System.Drawing.Bitmap($w, $h)
+    $g = [System.Drawing.Graphics]::FromImage($bmp)
+    try {
+        $g.Clear($script:AvGross.BackColor)
+        $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+        $g.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::ClearTypeGridFit
+        $oben = [int]($h * 0.28)
+        $typ = Av-TypBild $pfad   # Symbol + Endung (gleiches Bild wie in der Liste)
+        $tb = 150; $th = [int]($tb * $typ.Height / $typ.Width)
+        $g.DrawImage($typ, [int](($w - $tb) / 2), $oben, $tb, $th); $typ.Dispose()
+        $fmt = New-Object System.Drawing.StringFormat; $fmt.Alignment = "Center"
+        $f1 = New-Object System.Drawing.Font("Segoe UI Semibold", 12)
+        $f2 = New-Object System.Drawing.Font("Segoe UI", 10)
+        $y = $oben + $th + 14
+        $g.DrawString("Keine Vorschau f$([char]0x00FC)r diesen Dateityp", $f1, [System.Drawing.Brushes]::DimGray, (New-Object System.Drawing.RectangleF(20, $y, ($w - 40), 28)), $fmt)
+        $g.DrawString("Doppelklick oder $([char]0x201E)$([char]0x00D6)ffnen$([char]0x201C) $([char]0x00F6)ffnet die Datei im passenden Programm.", $f2, [System.Drawing.Brushes]::Gray, (New-Object System.Drawing.RectangleF(30, ($y + 30), ($w - 60), 48)), $fmt)
+        $f1.Dispose(); $f2.Dispose()
+    } finally { $g.Dispose() }
+    return $bmp
+}
 function Av-IstBild([string]$pfad) { return (@(".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tif", ".tiff") -contains [System.IO.Path]::GetExtension("$pfad").ToLowerInvariant()) }
 
 # Platzhalterbild fuer Nicht-PDFs: Windows-Symbol des Dateityps + Endung
@@ -7152,10 +7175,11 @@ function Av-ZeigeSeite($pfad, [int]$index) {
                 $d = Cloud-Datei $pfad
                 $fs = [System.IO.File]::OpenRead($d)
                 try { $tmpB = [System.Drawing.Image]::FromStream($fs); $script:AvGross.Image = New-Object System.Drawing.Bitmap $tmpB; $tmpB.Dispose() } finally { $fs.Close() }
-                $script:AvSeite.Text = "Bild - Doppelklick oeffnet es"
-            } catch { $script:AvSeite.Text = "Keine Vorschau moeglich - Doppelklick oeffnet die Datei" }
+                $script:AvSeite.Text = "Bild"
+            } catch { $script:AvSeite.Text = ""; try { $script:AvGross.Image = Av-KeineVorschauBild $pfad } catch {} }
         } else {
-            $script:AvSeite.Text = "Keine Vorschau - Doppelklick oeffnet die Datei"
+            $script:AvSeite.Text = ""
+            try { $script:AvGross.Image = Av-KeineVorschauBild $pfad } catch {}
         }
         return
     }
@@ -7182,7 +7206,7 @@ function Av-ZeigeSeite($pfad, [int]$index) {
     $script:AvGross.Image = $r.Bild
     $script:AvSeiteNr = $r.Index
     $script:AvSeiten = $r.Anzahl
-    $script:AvSeite.Text = "Seite $($r.Index + 1) von $($r.Anzahl)"
+    $script:AvSeite.Text = "Seite $($r.Index + 1) / $($r.Anzahl)"
     $script:AvZurueck.Enabled = ($r.Index -gt 0)
     $script:AvVor.Enabled = ($r.Index -lt $r.Anzahl - 1)
 }
@@ -7892,7 +7916,7 @@ function Zeige-DokumenteAnsehen {
     $script:AvSeite.Font = New-Object System.Drawing.Font("Segoe UI", 10)
     $script:AvVor = Neuer-SymbolKnopf 0xE76C "" "N$([char]0x00E4)chste Seite (Bild ab)"
     $abstand = New-Object System.Windows.Forms.Label
-    $abstand.Size = New-Object System.Drawing.Size(14, 40); $abstand.Margin = New-Object System.Windows.Forms.Padding(0)
+    $abstand.Size = New-Object System.Drawing.Size(8, 40); $abstand.Margin = New-Object System.Windows.Forms.Padding(0)
     $btnLinks = Neuer-SymbolKnopf 0xE7A7 "" "Nach links drehen (diese Seite, mit Haken 'Alle Seiten': alle)"
     $btnRechts = Neuer-SymbolKnopf 0xE7A6 "" "Nach rechts drehen (diese Seite, mit Haken 'Alle Seiten': alle)"
     $btnSeiteWeg = Neuer-SymbolKnopf 0xE74D "" "Diese Seite entfernen (hat das Dokument nur eine Seite: ganzes Dokument l$([char]0x00F6)schen). Dokument l$([char]0x00F6)schen auch mit Entf oder Rechtsklick."
@@ -8214,7 +8238,7 @@ function Zeige-DokumenteAnsehen {
         $script:AvFilter.Focus()
         Av-SetzeListenArt
         try { $sc1.SplitterDistance = 250 } catch {}
-        try { $sc2.SplitterDistance = [Math]::Max(300, $sc2.Width - 430) } catch {}
+        try { $sc2.SplitterDistance = [Math]::Max(300, $sc2.Width - 540) } catch {}
         Av-PasseSpaltenAn
         $start = $null
         if ($script:AvStartOrdner) { try { $start = Av-FindeKnoten $script:AvStartOrdner } catch {} }
