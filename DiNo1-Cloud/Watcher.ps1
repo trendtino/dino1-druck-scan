@@ -255,7 +255,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "Cloud 30"
+$script:WatcherVersion      = "Cloud 31"
 $script:WatcherVersionDatum = "16.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -7752,6 +7752,77 @@ function Av-ZielMarkierung($it) {
     if ($it) { $it.BackColor = $script:FarbeAkzentHell }
 }
 
+# Dateien in einen anderen Ordner verschieben (Ziehen auf den Ordnerbaum).
+# In HiDrive wird direkt dort verschoben (schnell), Wartendes auf dem PC lokal.
+function Av-VerschiebeNach([string[]]$pfade, [string]$zielOrdner, [string]$zielName) {
+    $zielOrdner = $zielOrdner.TrimEnd([char]92)
+    $m = @($pfade | Where-Object { $_ -and ([System.IO.Path]::GetDirectoryName($_).TrimEnd([char]92) -ine $zielOrdner) })
+    if ($m.Count -eq 0 -or $script:AvBeschaeftigt) { return }
+    $namen = (@($m | Select-Object -First 6 | ForEach-Object { [System.IO.Path]::GetFileName($_) }) -join "`n")
+    if ($m.Count -gt 6) { $namen += "`n..." }
+    $a = [System.Windows.Forms.MessageBox]::Show("$($m.Count) Datei(en) nach $([char]0x201E)$zielName$([char]0x201C) verschieben?`n`n$namen", "Verschieben", "YesNo", "Question")
+    if ($a -ne "Yes") { return }
+    if ($script:AvSeitePfad -and ($m -contains $script:AvSeitePfad)) { $script:AvDrehungen = @{}; Av-ZeigeAenderung; Av-ZeigeSeite $null 0 }
+    $ok = 0; $fehler = New-Object System.Collections.Generic.List[string]
+    $vorhanden = $null
+    $script:AvBeschaeftigt = $true
+    [System.Windows.Forms.Cursor]::Current = [System.Windows.Forms.Cursors]::WaitCursor
+    try {
+        foreach ($p in $m) {
+            $name = [System.IO.Path]::GetFileName($p)
+            $basis = [System.IO.Path]::GetFileNameWithoutExtension($p)
+            $endung = [System.IO.Path]::GetExtension($p).TrimStart(".")
+            try {
+                $neu = $null
+                $zielLog = Cloud-Logisch $zielOrdner
+                if ([System.IO.File]::Exists($p) -or -not $zielLog) {
+                    # liegt (noch) auf diesem PC -> lokal verschieben, der Abgleich laedt es am neuen Ort hoch
+                    if (-not [System.IO.File]::Exists($p)) { Cloud-ZumBearbeiten @($p) }
+                    New-Item -ItemType Directory -Force -Path $zielOrdner | Out-Null
+                    $neu = Get-EindeutigerZielpfad $zielOrdner $basis $endung
+                    Move-Item -LiteralPath $p -Destination $neu -Force
+                } else {
+                    $log = Cloud-Logisch $p
+                    if (-not $log) { throw "Datei nicht gefunden" }
+                    if ($null -eq $vorhanden) {
+                        $vorhanden = @{}
+                        try { foreach ($e in @(Get-HdListe -V (Cloud-Verbindung) -Pfad $zielLog)) { $vorhanden[$e.Name.ToLowerInvariant()] = $true } } catch {}
+                        foreach ($f in @(Get-ChildItem -LiteralPath $zielOrdner -File -ErrorAction SilentlyContinue)) { $vorhanden[$f.Name.ToLowerInvariant()] = $true }
+                    }
+                    $kand = $name; $n = 2
+                    while ($vorhanden.ContainsKey($kand.ToLowerInvariant())) { $kand = "$basis ($n)" + $(if ($endung) { ".$endung" } else { "" }); $n++ }
+                    Move-HdDatei -V (Cloud-Verbindung) -Quelle $log -Ziel (Join-HdPfad $zielLog $kand)
+                    $vorhanden[$kand.ToLowerInvariant()] = $true
+                    $neu = Join-Path $zielOrdner $kand
+                }
+                Schreibe-Log "Verschoben (Ansicht): $p -> $neu"
+                if (Av-IstPdf $p) { try { $abl = Ermittle-AblageFuerPfad $neu; Merke-Verschiebung $p $neu $abl.Ziel $abl.Mitarbeiter $basis } catch {} }
+                $ok++
+                foreach ($it in @($script:AvListe.Items)) { if ([string]$it.Tag -ieq $p) { $script:AvListe.Items.Remove($it) } }
+            } catch {
+                [void]$fehler.Add("$name - $($_.Exception.Message)")
+                Schreibe-FehlerLog "beim Verschieben von $p" $_
+            }
+        }
+    } finally {
+        $script:AvBeschaeftigt = $false
+        Cloud-Pause $false
+        [System.Windows.Forms.Cursor]::Current = [System.Windows.Forms.Cursors]::Default
+    }
+    $script:AvStatus.Text = "$ok Datei(en) nach $([char]0x201E)$zielName$([char]0x201C) verschoben."
+    if ($fehler.Count -gt 0) { [System.Windows.Forms.MessageBox]::Show("Nicht verschoben:`n`n" + ($fehler -join "`n"), "Verschieben") | Out-Null }
+}
+
+# Dateien aus dem Explorer auf einen Ordner im Baum ziehen = dorthin kopieren
+function Av-KopiereNach([string[]]$dateien, [string]$zielOrdner) {
+    New-Item -ItemType Directory -Force -Path $zielOrdner | Out-Null
+    foreach ($d in $dateien) {
+        try { Copy-Item -LiteralPath $d -Destination (Get-EindeutigerZielpfad $zielOrdner ([System.IO.Path]::GetFileNameWithoutExtension($d)) ([System.IO.Path]::GetExtension($d).TrimStart("."))) -ErrorAction Stop } catch {}
+    }
+    if ($script:AvOrdner -and ($script:AvOrdner.TrimEnd([char]92) -ieq $zielOrdner.TrimEnd([char]92))) { Av-LadeOrdner $script:AvOrdner }
+    $script:AvStatus.Text = "$(@($dateien).Count) Datei(en) hineinkopiert."
+}
+
 # PDFs hinten an ein Dokument anhaengen (wie Stapeln bei PaperPort)
 function Av-HaengeAn([string]$ziel, [string[]]$dateien, [bool]$intern) {
     if (-not (Av-IstPdf $ziel)) { return }   # anhaengen nur an PDFs
@@ -8131,6 +8202,51 @@ function Zeige-DokumenteAnsehen {
         try { [void]$script:AvListe.DoDragDrop($daten, ([System.Windows.Forms.DragDropEffects]::Copy -bor [System.Windows.Forms.DragDropEffects]::Move)) }
         finally { $script:AvZiehtIntern = $null; Av-ZielMarkierung $null }
     })
+    # ---- Ziehen auf einen Ordner im Baum: verschieben (aus der Liste) / kopieren (aus dem Explorer) ----
+    $script:AvBaumArbeit = $null
+    $script:AvBaumTimer = New-Object System.Windows.Forms.Timer
+    $script:AvBaumTimer.Interval = 50
+    $script:AvBaumTimer.Add_Tick({
+        $script:AvBaumTimer.Stop()
+        $a = $script:AvBaumArbeit; $script:AvBaumArbeit = $null
+        if (-not $a) { return }
+        try {
+            if ($a.Intern) { Av-VerschiebeNach $a.Dateien $a.Ordner $a.Name } else { Av-KopiereNach $a.Dateien $a.Ordner }
+        } catch { Schreibe-FehlerLog "beim Ziehen auf den Ordnerbaum" $_ }
+    })
+    $script:AvBaum.AllowDrop = $true
+    $script:AvBaum.Add_DragOver({
+        param($s, $e)
+        $pt = $script:AvBaum.PointToClient((New-Object System.Drawing.Point($e.X, $e.Y)))
+        $kn = $script:AvBaum.GetNodeAt($pt.X, $pt.Y)
+        $ok = ($kn -and $kn.Tag -and ($script:AvZiehtIntern -or $e.Data.GetDataPresent([System.Windows.Forms.DataFormats]::FileDrop)))
+        if ($ok) {
+            $e.Effect = $(if ($script:AvZiehtIntern) { "Move" } else { "Copy" })
+            Av-ZielMarkierung $kn
+            # kurz ueber einem zugeklappten Ordner halten = aufklappen
+            if (-not $kn.IsExpanded -and $kn.Nodes.Count -gt 0) {
+                if ($script:AvBaumHover -ne $kn) { $script:AvBaumHover = $kn; $script:AvBaumHoverSeit = Get-Date }
+                elseif (((Get-Date) - $script:AvBaumHoverSeit).TotalMilliseconds -gt 900) { $kn.Expand() }
+            }
+        } else { $e.Effect = "None"; Av-ZielMarkierung $null }
+    })
+    $script:AvBaum.Add_DragLeave({ Av-ZielMarkierung $null })
+    $script:AvBaum.Add_DragDrop({
+        param($s, $e)
+        Av-ZielMarkierung $null
+        $pt = $script:AvBaum.PointToClient((New-Object System.Drawing.Point($e.X, $e.Y)))
+        $kn = $script:AvBaum.GetNodeAt($pt.X, $pt.Y)
+        if (-not $kn -or -not $kn.Tag) { return }
+        if ($script:AvZiehtIntern) {
+            $script:AvBaumArbeit = @{ Intern = $true; Dateien = @($script:AvZiehtIntern); Ordner = [string]$kn.Tag; Name = [string]$kn.Text }
+        } else {
+            $d = @([string[]]$e.Data.GetData([System.Windows.Forms.DataFormats]::FileDrop) | Where-Object { $_ -and [System.IO.File]::Exists($_) -and -not (Av-IstHilfsdatei ([System.IO.Path]::GetFileName($_))) })
+            if ($d.Count -eq 0) { return }
+            $script:AvBaumArbeit = @{ Intern = $false; Dateien = $d; Ordner = [string]$kn.Tag; Name = [string]$kn.Text }
+        }
+        $script:AvBaumTimer.Start()   # nach dem Ziehen ausfuehren (Ziehen blockiert sonst)
+    })
+
     $script:AvListe.Add_DragOver({
         param($s, $e)
         if (-not $e.Data.GetDataPresent([System.Windows.Forms.DataFormats]::FileDrop)) { $e.Effect = "None"; return }
