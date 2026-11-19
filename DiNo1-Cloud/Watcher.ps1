@@ -255,7 +255,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "Cloud 28"
+$script:WatcherVersion      = "Cloud 29"
 $script:WatcherVersionDatum = "16.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -7893,10 +7893,15 @@ function Zeige-DokumenteAnsehen {
     $script:AvVor = Neuer-SymbolKnopf 0xE76C "" "N$([char]0x00E4)chste Seite (Bild ab)"
     $abstand = New-Object System.Windows.Forms.Label
     $abstand.Size = New-Object System.Drawing.Size(14, 40); $abstand.Margin = New-Object System.Windows.Forms.Padding(0)
-    $btnLinks = Neuer-SymbolKnopf 0xE7A7 "" "Seite nach links drehen"
-    $btnRechts = Neuer-SymbolKnopf 0xE7A6 "" "Seite nach rechts drehen"
+    $btnLinks = Neuer-SymbolKnopf 0xE7A7 "" "Nach links drehen (diese Seite, mit Haken 'Alle Seiten': alle)"
+    $btnRechts = Neuer-SymbolKnopf 0xE7A6 "" "Nach rechts drehen (diese Seite, mit Haken 'Alle Seiten': alle)"
     $btnSeiteWeg = Neuer-SymbolKnopf 0xE74D "" "Diese Seite entfernen (hat das Dokument nur eine Seite: ganzes Dokument l$([char]0x00F6)schen). Dokument l$([char]0x00F6)schen auch mit Entf oder Rechtsklick."
-    $leiste.Controls.AddRange(@($script:AvZurueck, $script:AvSeite, $script:AvVor, $abstand, $btnLinks, $btnRechts, $btnSeiteWeg))
+    $script:AvAlleSeiten = New-Object System.Windows.Forms.CheckBox
+    $script:AvAlleSeiten.Text = "Alle Seiten"
+    $script:AvAlleSeiten.AutoSize = $true
+    $script:AvAlleSeiten.Font = New-Object System.Drawing.Font("Segoe UI", 9.5)
+    $script:AvAlleSeiten.Margin = New-Object System.Windows.Forms.Padding(2, 11, 8, 0)
+    $leiste.Controls.AddRange(@($script:AvZurueck, $script:AvSeite, $script:AvVor, $abstand, $btnLinks, $btnRechts, $script:AvAlleSeiten, $btnSeiteWeg))
 
     $leiste2 = New-Object System.Windows.Forms.FlowLayoutPanel
     $leiste2.Dock = "Bottom"; $leiste2.Height = 54
@@ -8027,8 +8032,8 @@ function Zeige-DokumenteAnsehen {
     $script:AvListe.Add_SelectedIndexChanged({ $script:AvAuswahlTimer.Stop(); $script:AvAuswahlTimer.Start() })
     $script:AvZurueck.Add_Click({ if ($script:AvSeitePfad) { Av-ZeigeSeite $script:AvSeitePfad ($script:AvSeiteNr - 1) } })
     $script:AvVor.Add_Click({ if ($script:AvSeitePfad) { Av-ZeigeSeite $script:AvSeitePfad ($script:AvSeiteNr + 1) } })
-    $btnLinks.Add_Click({ Av-Dreh -1 $false })
-    $btnRechts.Add_Click({ Av-Dreh 1 $false })
+    $btnLinks.Add_Click({ Av-Dreh -1 ([bool]$script:AvAlleSeiten.Checked) })
+    $btnRechts.Add_Click({ Av-Dreh 1 ([bool]$script:AvAlleSeiten.Checked) })
     $btnSeiteWeg.Add_Click({ Av-SeiteEntfernen })
     $script:AvBtnSpeichern.Add_Click({ $p = $script:AvSeitePfad; $nr = [int]$script:AvSeiteNr; if (Av-SpeichereAenderung) { Av-ZeigeSeite $p $nr } })
     $script:AvBtnVerwerfen.Add_Click({ Av-Verwerfen })
@@ -8195,8 +8200,8 @@ function Zeige-DokumenteAnsehen {
         elseif ($e.KeyCode -eq "Delete" -and $script:AvListe.Focused) { Av-DokumenteLoeschen; $e.Handled = $true }
         elseif ($e.KeyCode -eq "PageDown" -and $script:AvVor.Enabled) { $script:AvVor.PerformClick(); $e.Handled = $true }
         elseif ($e.KeyCode -eq "PageUp" -and $script:AvZurueck.Enabled) { $script:AvZurueck.PerformClick(); $e.Handled = $true }
-        elseif ($e.Control -and $e.KeyCode -eq "R") { Av-Dreh 1 $false; $e.Handled = $true }
-        elseif ($e.Control -and $e.KeyCode -eq "L") { Av-Dreh -1 $false; $e.Handled = $true }
+        elseif ($e.Control -and $e.KeyCode -eq "R") { Av-Dreh 1 ([bool]$script:AvAlleSeiten.Checked); $e.Handled = $true }
+        elseif ($e.Control -and $e.KeyCode -eq "L") { Av-Dreh -1 ([bool]$script:AvAlleSeiten.Checked); $e.Handled = $true }
         elseif ($e.Control -and $e.KeyCode -eq "S" -and $script:AvDrehungen.Count -gt 0) { $script:AvBtnSpeichern.PerformClick(); $e.Handled = $true }
         elseif ($e.Control -and $e.KeyCode -eq "F") { $script:AvFilter.Focus(); $script:AvFilter.SelectAll(); $e.Handled = $true }
     })
