@@ -255,7 +255,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "Cloud 31"
+$script:WatcherVersion      = "Cloud 32"
 $script:WatcherVersionDatum = "16.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -3161,9 +3161,9 @@ function Setze-KonfigMitarbeiter($konfig, $paare) {
 }
 
 # Lokal-Modus: nur den einen Ablage-Ordner aendern
-function Zeige-LokalOrdnerWahl {
+function Zeige-LokalOrdnerWahl([switch]$NurLokal) {
     $d = New-Object System.Windows.Forms.FolderBrowserDialog
-    $d.Description = "Ablage-Ordner auf diesem PC waehlen (dort landen alle Scans und Drucke)"
+    $d.Description = $(if ($NurLokal) { "Lokalen Ordner auf diesem PC waehlen (Ziel 'Lokal (PC)' - wird NICHT in HiDrive gespeichert)" } else { "Ablage-Ordner auf diesem PC waehlen (dort landen alle Scans und Drucke)" })
     $d.SelectedPath = $LokalerOrdner
     if ($d.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return }
     $neuOrdner = $d.SelectedPath.TrimEnd('\')
@@ -3172,7 +3172,9 @@ function Zeige-LokalOrdnerWahl {
         $teile = Teile-WatcherText $text
         if (-not $teile) { throw "Abschnitt KONFIGURATION nicht gefunden." }
         $neu = $teile.Konfig
-        foreach ($n in @("LokalerOrdner", "ShopOrdner", "ZielBasis")) { $neu = Setze-KonfigWert $neu $n $neuOrdner }
+        $felder = $(if ($NurLokal) { @("LokalerOrdner") } else { @("LokalerOrdner", "ShopOrdner", "ZielBasis") })
+        if ($NurLokal -and $script:CloudWurzel -and $neuOrdner.StartsWith($script:CloudWurzel, [System.StringComparison]::OrdinalIgnoreCase)) { throw "Dieser Ordner gehoert zu DiNo1 Cloud. Bitte einen normalen Ordner auf dem PC waehlen." }
+        foreach ($n in $felder) { $neu = Setze-KonfigWert $neu $n $neuOrdner }
         if ($neu -eq $teile.Konfig) { return }
         $inhalt = $teile.Kopf + $neu + $teile.Code
         $fehler = $null
@@ -3184,8 +3186,8 @@ function Zeige-LokalOrdnerWahl {
         [System.Windows.Forms.MessageBox]::Show("Speichern fehlgeschlagen: $($_.Exception.Message)`n`nEs wurde nichts geaendert.", "Ordner anpassen") | Out-Null
         return
     }
-    Schreibe-Log "Ablage-Ordner geaendert: $neuOrdner. Watcher startet neu."
-    [System.Windows.Forms.MessageBox]::Show("Gespeichert. Ab jetzt wird hier abgelegt:`n$neuOrdner`n`nDiNo1 Cloud startet neu.", "Ordner anpassen") | Out-Null
+    Schreibe-Log "$(if ($NurLokal) { 'Lokaler Ordner' } else { 'Ablage-Ordner' }) geaendert: $neuOrdner. Watcher startet neu."
+    [System.Windows.Forms.MessageBox]::Show("Gespeichert. $(if ($NurLokal) { "'Lokal (PC)' legt ab jetzt hier ab" } else { 'Ab jetzt wird hier abgelegt' }):`n$neuOrdner`n`nDiNo1 Cloud startet neu.", "Ordner anpassen") | Out-Null
     Starte-WatcherNeu
 }
 
@@ -8427,6 +8429,13 @@ $menuAblageOeffnen = $menu.Items.Add("Ablage-Ordner oeffnen")
 $menuAblageOeffnen.Add_Click({ Start-Process -FilePath "explorer.exe" -ArgumentList "`"$WatchFolder`"" })
 $menuAblageOeffnen.Visible = $false   # DiNo1 Cloud
 $menuOrdner.Visible = $script:LokalModus   # Cloud: Ordner kommen aus der Admin-App; Lokal: am PC einstellen
+# Cloud-Shops: nur der lokale PC-Ordner ist am PC einstellbar (alles andere gibt der Admin frei)
+$menuLokalOrdner = $menu.Items.Add("Lokalen Ordner (PC) anpassen...")
+$menuLokalOrdner.Add_Click({
+    $timer.Stop()
+    try { Zeige-LokalOrdnerWahl -NurLokal } finally { if (-not $script:WirdBeendet) { try { $timer.Start() } catch {} } }
+})
+$menuLokalOrdner.Visible = (-not $script:LokalModus)
 $menuZusammen = $menu.Items.Add("PDFs zusammenfuegen...")
 $menuZusammen.Add_Click({ Zeige-Zusammenfuegen @() })
 $menuBericht = $menu.Items.Add("Tagesbericht anzeigen")
@@ -9259,10 +9268,11 @@ function Zeige-Hauptfenster {
     } else {
         $klein = @(
             @("Tagesbericht",    0xE787, $menuBericht),
+            @("Lokaler Ordner",  0xE713, $menuLokalOrdner),
             @("Updates",         0xE895, $menuUpdate),
             @("Diagnose",        0xE9D9, $menuDiagnose)
         )
-        $kBreite = 207; $kAbstand = 215
+        $kBreite = 153; $kAbstand = 161
     }
     for ($i = 0; $i -lt $klein.Count; $i++) {
         $p = Neue-Kachel $f (20 + $i * $kAbstand) 464 $kBreite 66 $klein[$i][0] $klein[$i][1] $menueAktion "klein"
