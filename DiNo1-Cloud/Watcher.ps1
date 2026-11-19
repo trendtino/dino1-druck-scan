@@ -255,7 +255,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "Cloud 25"
+$script:WatcherVersion      = "Cloud 26"
 $script:WatcherVersionDatum = "16.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -8416,13 +8416,25 @@ function Pruefe-AufUpdate([bool]$manuell) {
     }
     if ($manuell -and -not $script:LokalModus) {
         # DiNo1 Cloud: Abgleich holt die Update-Dateien sofort aus HiDrive (statt alle 30 Min)
+        # Abgleich-Teile (Abgleich, Baustein) holt der Abgleich selbst - nur Bescheid geben, nicht warten
         $anf = Join-Path $script:CloudDaten "Update_jetzt.txt"
+        try { [System.IO.File]::WriteAllText($anf, (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")) } catch {}
+        # Watcher.ps1 sofort selbst aus HiDrive holen (dauert nur Sekunden)
         try {
-            [System.IO.File]::WriteAllText($anf, (Get-Date).ToString("yyyy-MM-dd HH:mm:ss"))
-            $bis = (Get-Date).AddSeconds(45)
-            while ((Test-Path -LiteralPath $anf) -and (Get-Date) -lt $bis) { [System.Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 300 }
-            Remove-Item -LiteralPath $anf -Force -ErrorAction SilentlyContinue
-        } catch {}
+            [System.Windows.Forms.Cursor]::Current = [System.Windows.Forms.Cursors]::WaitCursor
+            $lokalQ = $UpdateQuelle.Trim()
+            if ($lokalQ -and $lokalQ -notmatch '^[a-zA-Z][a-zA-Z0-9+.-]*://') {
+                if ($lokalQ -notlike '*.ps1') { $lokalQ = Join-Path $lokalQ "Watcher.ps1" }
+                $logQ = Cloud-Logisch $lokalQ
+                if ($logQ) {
+                    New-Item -ItemType Directory -Force -Path (Split-Path $lokalQ) | Out-Null
+                    $tmpQ = $lokalQ + ".laden"
+                    Get-HdDatei -V (Cloud-Verbindung) -Pfad $logQ -LokaleDatei $tmpQ
+                    Move-Item -LiteralPath $tmpQ -Destination $lokalQ -Force
+                }
+            }
+        } catch { Schreibe-Log "Update: direkt aus HiDrive nicht moeglich ($($_.Exception.Message)) - nehme den letzten Stand." }
+        finally { [System.Windows.Forms.Cursor]::Current = [System.Windows.Forms.Cursors]::Default }
     }
     if ([string]::IsNullOrWhiteSpace($UpdateQuelle)) {
         if ($manuell) { & $melde "Fuer diesen PC ist keine Update-Quelle eingetragen (Setup -> 'Update-Quelle')." ([System.Windows.Forms.MessageBoxIcon]::Information) }
