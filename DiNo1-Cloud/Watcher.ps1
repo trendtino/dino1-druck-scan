@@ -255,7 +255,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "Cloud 27"
+$script:WatcherVersion      = "Cloud 28"
 $script:WatcherVersionDatum = "16.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -6946,6 +6946,7 @@ function Av-MiniTick {
         $script:AvNaechste++
         if ($it.ImageKey -ne "_leer") { continue }
         $pf = [string]$it.Tag
+        if (-not (Av-IstPdf $pf)) { Av-SetzeMiniatur $it (Av-TypBild $pf); continue }   # Word, Excel, Bilder ...
         $bild = Lade-MiniaturAusCache $pf
         if ($bild) { Av-SetzeMiniatur $it $bild; continue }
         if ($z) {
@@ -6994,11 +6995,60 @@ function Cloud-LeereZwischenspeicher {
     try { if (Test-Path -LiteralPath $script:CloudCache) { Remove-Item -LiteralPath $script:CloudCache -Recurse -Force -ErrorAction SilentlyContinue } } catch {}
 }
 
-# PDFs eines Ordners: was noch auf dem PC wartet + was in HiDrive liegt
+# Hilfsdateien, die nie in der Ansicht erscheinen
+function Av-IstHilfsdatei([string]$name) {
+    $n = $name.ToLowerInvariant()
+    if ($n.StartsWith(".") -or $n.StartsWith("~$")) { return $true }
+    if (@("desktop.ini", "thumbs.db") -contains $n) { return $true }
+    foreach ($e in @(".teil", ".laden", ".tmp", ".neu")) { if ($n.EndsWith($e)) { return $true } }
+    return $false
+}
+function Av-IstPdf([string]$pfad) { return ("$pfad".ToLowerInvariant().EndsWith(".pdf")) }
+function Av-NurPdf($pfade, [string]$was) {
+    foreach ($x in @($pfade)) {
+        if (-not (Av-IstPdf $x)) {
+            [System.Windows.Forms.MessageBox]::Show("$was geht nur bei PDF-Dateien.`n`nAndere Dateien (Word, Excel, Bilder ...) bitte per Doppelklick oeffnen.", "DiNo1 Cloud") | Out-Null
+            return $false
+        }
+    }
+    return $true
+}
+function Av-IstBild([string]$pfad) { return (@(".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tif", ".tiff") -contains [System.IO.Path]::GetExtension("$pfad").ToLowerInvariant()) }
+
+# Platzhalterbild fuer Nicht-PDFs: Windows-Symbol des Dateityps + Endung
+$script:AvTypBilder = @{}
+function Av-TypBild([string]$pfad) {
+    $end = [System.IO.Path]::GetExtension($pfad).ToLowerInvariant()
+    $bmp = New-Object System.Drawing.Bitmap($script:AvMiniB, $script:AvMiniH)
+    $g = [System.Drawing.Graphics]::FromImage($bmp)
+    try {
+        $g.Clear([System.Drawing.Color]::White)
+        $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+        $ic = $null
+        try {
+            if (-not $script:AvTypBilder.ContainsKey($end)) {
+                $dummy = Join-Path $ScanTempOrdner ("Typ" + $end)
+                if (-not (Test-Path -LiteralPath $dummy)) { [System.IO.File]::WriteAllBytes($dummy, [byte[]]@()) }
+                $script:AvTypBilder[$end] = ([System.Drawing.Icon]::ExtractAssociatedIcon($dummy)).ToBitmap()
+            }
+            $ic = $script:AvTypBilder[$end]
+        } catch {}
+        $gr = 64
+        if ($ic) { $g.DrawImage($ic, [int](($script:AvMiniB - $gr) / 2), 40, $gr, $gr) }
+        $schrift = New-Object System.Drawing.Font("Segoe UI", 11, [System.Drawing.FontStyle]::Bold)
+        $fmt = New-Object System.Drawing.StringFormat; $fmt.Alignment = "Center"
+        $g.DrawString($end.TrimStart(".").ToUpperInvariant(), $schrift, [System.Drawing.Brushes]::DimGray, (New-Object System.Drawing.RectangleF(0, 116, $script:AvMiniB, 24)), $fmt)
+        $schrift.Dispose()
+    } finally { $g.Dispose() }
+    return $bmp
+}
+
+# Dateien eines Ordners: was noch auf dem PC wartet + was in HiDrive liegt
 function Av-HoleDateien([string]$ordner) {
     $liste = New-Object System.Collections.ArrayList
     $namen = @{}
-    foreach ($f in @(Get-ChildItem -LiteralPath $ordner -Filter "*.pdf" -File -ErrorAction SilentlyContinue)) {
+    foreach ($f in @(Get-ChildItem -LiteralPath $ordner -File -ErrorAction SilentlyContinue)) {
+        if (Av-IstHilfsdatei $f.Name) { continue }
         [void]$liste.Add([pscustomobject]@{ Name = $f.Name; FullName = $f.FullName; LastWriteTime = $f.LastWriteTime; Length = [long]$f.Length })
         $namen[$f.Name.ToLowerInvariant()] = $true
     }
@@ -7007,7 +7057,7 @@ function Av-HoleDateien([string]$ordner) {
     if ($log) {
         try {
             foreach ($e in @(Get-HdListe -V (Cloud-Verbindung) -Pfad $log)) {
-                if ($e.IstOrdner -or -not $e.Name.ToLowerInvariant().EndsWith(".pdf")) { continue }
+                if ($e.IstOrdner -or (Av-IstHilfsdatei $e.Name)) { continue }
                 if ($namen.ContainsKey($e.Name.ToLowerInvariant())) { continue }
                 $lokal = Join-Path $ordner $e.Name
                 $zeit = [datetime]::MinValue
@@ -7071,7 +7121,7 @@ function Av-LadeOrdner([string]$ordner) {
             [void]$it.SubItems.Add(("{0:N0} KB" -f [Math]::Ceiling($f.Length / 1024)))
             [void]$liste.Items.Add($it)
         }
-        $script:AvStatus.Text = "$gesamt PDF(s)" + $(if ($gesamt -gt 500) { " - die neuesten 500 werden angezeigt" } else { "" }) + $script:AvCloudFehler
+        $script:AvStatus.Text = "$gesamt Datei(en)" + $(if ($gesamt -gt 500) { " - die neuesten 500 werden angezeigt" } else { "" }) + $script:AvCloudFehler
     } finally {
         $liste.EndUpdate()
     }
@@ -7092,6 +7142,23 @@ function Av-ZeigeSeite($pfad, [int]$index) {
         return
     }
     $script:AvName.Text = [System.IO.Path]::GetFileName($pfad)
+    if (-not (Av-IstPdf $pfad)) {
+        # Kein PDF: Bilder als Vorschau zeigen, alles andere per Doppelklick im passenden Programm oeffnen
+        $script:AvZurueck.Enabled = $false; $script:AvVor.Enabled = $false
+        $script:AvSeiten = 0; $script:AvSeiteNr = 0
+        if (Av-IstBild $pfad) {
+            $script:AvSeite.Text = "wird geladen ..."; $script:AvSeite.Refresh()
+            try {
+                $d = Cloud-Datei $pfad
+                $fs = [System.IO.File]::OpenRead($d)
+                try { $tmpB = [System.Drawing.Image]::FromStream($fs); $script:AvGross.Image = New-Object System.Drawing.Bitmap $tmpB; $tmpB.Dispose() } finally { $fs.Close() }
+                $script:AvSeite.Text = "Bild - Doppelklick oeffnet es"
+            } catch { $script:AvSeite.Text = "Keine Vorschau moeglich - Doppelklick oeffnet die Datei" }
+        } else {
+            $script:AvSeite.Text = "Keine Vorschau - Doppelklick oeffnet die Datei"
+        }
+        return
+    }
     $script:AvSeite.Text = "wird geladen ..."
     $script:AvSeite.Refresh()
     $breite = [Math]::Max(900, [Math]::Min(1600, $script:AvGross.Width * 2))
@@ -7287,6 +7354,7 @@ function Av-ZeigeAenderung {
 
 function Av-Dreh([int]$richtung, [bool]$alleSeiten) {
     if (-not $script:AvSeitePfad -or $script:AvBeschaeftigt) { return }
+    if (-not (Av-IstPdf $script:AvSeitePfad)) { return }   # drehen nur bei PDFs
     $seiten = @([int]$script:AvSeiteNr)
     if ($alleSeiten -and $script:AvSeiten -gt 0) { $seiten = @(0..([int]$script:AvSeiten - 1)) }
     foreach ($i in $seiten) {
@@ -7412,6 +7480,7 @@ function Av-Verschiebe([string]$art, [string]$mitarbeiter) {
     $m = @(Av-Markierte)
     if ($m.Count -ne 1) { return }
     $p = $m[0]
+    if (-not (Av-NurPdf @($p) "Verschieben")) { return }
     try {
         Cloud-ZumBearbeiten @($p)
         $datum = (Get-Item -LiteralPath $p).LastWriteTime.ToString("yyyy-MM-dd")
@@ -7661,6 +7730,7 @@ function Av-ZielMarkierung($it) {
 
 # PDFs hinten an ein Dokument anhaengen (wie Stapeln bei PaperPort)
 function Av-HaengeAn([string]$ziel, [string[]]$dateien, [bool]$intern) {
+    if (-not (Av-IstPdf $ziel)) { return }   # anhaengen nur an PDFs
     $dateien = @($dateien | Where-Object { $_ -and $_ -ine $ziel -and $_.ToLowerInvariant().EndsWith(".pdf") })
     if ($dateien.Count -eq 0) { return }
     $namen = (@($dateien | ForEach-Object { [System.IO.Path]::GetFileName($_) }) -join ", ")
@@ -7952,7 +8022,7 @@ function Zeige-DokumenteAnsehen {
         if ($p -ne $script:AvSeitePfad) { Av-ZeigeSeite $p 0 }
         if ($p -and -not $script:AvOrdner) { Av-MarkiereOrdner $p }
         $script:AvBtnZus.Enabled = ($m.Count -ge 2)
-        $script:AvStatus.Text = $(if ($m.Count -gt 1) { "$($m.Count) markiert - Zusammenf$([char]0x00FC)gen unten rechts" } elseif ($p) { [System.IO.Path]::GetFileName($p) } else { "$($script:AvListe.Items.Count) PDF(s)" })
+        $script:AvStatus.Text = $(if ($m.Count -gt 1) { "$($m.Count) markiert - Zusammenf$([char]0x00FC)gen unten rechts" } elseif ($p) { [System.IO.Path]::GetFileName($p) } else { "$($script:AvListe.Items.Count) Datei(en)" })
     })
     $script:AvListe.Add_SelectedIndexChanged({ $script:AvAuswahlTimer.Stop(); $script:AvAuswahlTimer.Start() })
     $script:AvZurueck.Add_Click({ if ($script:AvSeitePfad) { Av-ZeigeSeite $script:AvSeitePfad ($script:AvSeiteNr - 1) } })
@@ -7965,6 +8035,7 @@ function Zeige-DokumenteAnsehen {
     $script:AvBtnZus.Add_Click({
         $m = @(Av-Markierte)
         if ($m.Count -lt 2) { return }
+        if (-not (Av-NurPdf $m "Zusammenfuegen")) { return }
         try { Cloud-ZumBearbeiten $m; Zeige-Zusammenfuegen $m }
         catch { Schreibe-FehlerLog "beim Zusammenfuegen" $_; [System.Windows.Forms.MessageBox]::Show("Zusammenf$([char]0x00FC)gen fehlgeschlagen: $($_.Exception.Message)", "DiNo1 Cloud") | Out-Null }
         finally { Cloud-Pause $false }
@@ -8014,7 +8085,7 @@ function Zeige-DokumenteAnsehen {
         if ($a.Ziel) { Av-HaengeAn $a.Ziel $a.Dateien $a.Intern }
         else {
             foreach ($d in $a.Dateien) {
-                try { Copy-Item -LiteralPath $d -Destination (Get-EindeutigerZielpfad $script:AvOrdner ([System.IO.Path]::GetFileNameWithoutExtension($d)) "pdf") -ErrorAction Stop } catch {}
+                try { Copy-Item -LiteralPath $d -Destination (Get-EindeutigerZielpfad $script:AvOrdner ([System.IO.Path]::GetFileNameWithoutExtension($d)) ([System.IO.Path]::GetExtension($d).TrimStart("."))) -ErrorAction Stop } catch {}
             }
             Av-LadeOrdner $script:AvOrdner
         }
@@ -8048,7 +8119,7 @@ function Zeige-DokumenteAnsehen {
         Av-ZielMarkierung $null
         $pt = $script:AvListe.PointToClient((New-Object System.Drawing.Point($e.X, $e.Y)))
         $ziel = $script:AvListe.GetItemAt($pt.X, $pt.Y)
-        $dateien = @([string[]]$e.Data.GetData([System.Windows.Forms.DataFormats]::FileDrop) | Where-Object { $_ -and $_.ToLowerInvariant().EndsWith(".pdf") })
+        $dateien = @([string[]]$e.Data.GetData([System.Windows.Forms.DataFormats]::FileDrop) | Where-Object { $_ -and [System.IO.File]::Exists($_) -and -not (Av-IstHilfsdatei ([System.IO.Path]::GetFileName($_))) })
         if ($dateien.Count -eq 0) { return }
         $intern = [bool]$script:AvZiehtIntern
         if ($intern) { $dateien = @($script:AvZiehtIntern) }
@@ -8070,6 +8141,7 @@ function Zeige-DokumenteAnsehen {
     $miUm.Add_Click({
         $m = @(Av-Markierte); if ($m.Count -ne 1) { return }
         $p = $m[0]
+        if (-not (Av-NurPdf @($p) "Umbenennen")) { return }
         $neuName = Frage-Text "Umbenennen" "Neuer Dateiname (ohne .pdf):" ([System.IO.Path]::GetFileNameWithoutExtension($p))
         if ([string]::IsNullOrWhiteSpace($neuName)) { return }
         try {
@@ -8092,6 +8164,7 @@ function Zeige-DokumenteAnsehen {
     $miZus = $cm.Items.Add("Markierte zusammenf$([char]0x00FC)gen ...")
     $miZus.Add_Click({
         $m = @(Av-Markierte)
+        if (-not (Av-NurPdf $m "Zusammenfuegen")) { return }
         try { Cloud-ZumBearbeiten $m; Zeige-Zusammenfuegen $m }
         catch { Schreibe-FehlerLog "beim Zusammenfuegen" $_; [System.Windows.Forms.MessageBox]::Show("Zusammenf$([char]0x00FC)gen fehlgeschlagen: $($_.Exception.Message)", "DiNo1 Cloud") | Out-Null }
         finally { Cloud-Pause $false }
