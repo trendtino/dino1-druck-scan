@@ -255,7 +255,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "Cloud 26"
+$script:WatcherVersion      = "Cloud 27"
 $script:WatcherVersionDatum = "16.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -8354,7 +8354,7 @@ $trayIcon.Add_DoubleClick({ Zeige-Hauptfenster })
 #   4. Watcher neu starten
 $script:EigenerPfad = $PSCommandPath
 $script:UpdateZaehler = 0
-$script:UpdateAlleTicks = 200          # bei 3 s Pruefintervall: ca. alle 10 Minuten
+$script:UpdateAlleTicks = 40           # bei 3 s Pruefintervall: ca. alle 2 Minuten (nur lokaler Dateivergleich)
 $script:AbgelehnteUpdateKennung = ""
 # Nach "Vorherige Version wiederherstellen" steht hier der Programmstand, der
 # NICHT automatisch wieder installiert werden soll (bis "Nach Updates suchen"
