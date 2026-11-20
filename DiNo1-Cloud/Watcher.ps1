@@ -255,7 +255,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "Cloud 34"
+$script:WatcherVersion      = "Cloud 35"
 $script:WatcherVersionDatum = "16.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -2842,6 +2842,7 @@ function Verarbeite-Ablage {
                 $warteOrdner = Join-Path $zielOrdner $script:WarteOrdnerName
                 try {
                     if (-not (Test-Path $warteOrdner)) { New-Item -ItemType Directory -Path $warteOrdner -Force -ErrorAction Stop | Out-Null }
+                    try { (Get-Item -LiteralPath $warteOrdner -Force).Attributes = 'Hidden, Directory' } catch {}   # Zwischenablage, nicht in der Ansicht zeigen
                     $zielOrdner = $warteOrdner
                 } catch {}
             }
@@ -5539,6 +5540,15 @@ function Gib-WarteteileFrei($ordner, $schluessel) {
             Schreibe-Log "FEHLER beim Ablegen von $($f.FullName): $($_.Exception.Message)"
         }
     }
+    Entferne-LeerenWarteOrdner $ordner
+}
+
+# Leeren Ordner "Teile_warten" wieder entfernen
+function Entferne-LeerenWarteOrdner($ordner) {
+    try {
+        $warte = Join-Path $ordner $script:WarteOrdnerName
+        if ((Test-Path -LiteralPath $warte) -and @(Get-ChildItem -LiteralPath $warte -Force -ErrorAction SilentlyContinue).Count -eq 0) { Remove-Item -LiteralPath $warte -Force -ErrorAction Stop }
+    } catch {}
 }
 
 # Jede Minute: Gruppen, bei denen seit 2 Minuten kein Teil dazukam, zusammenfuegen
@@ -5576,6 +5586,7 @@ function Pruefe-AutoZusammenfuegen {
         }
         # Nicht zusammengefuegt (nur ein Teil, kein Teil 1, Fehler): Teile trotzdem ablegen
         if (-not $zusammengefuegt) { Gib-WarteteileFrei $c.Ordner $c.Schluessel }
+        Entferne-LeerenWarteOrdner $c.Ordner
     }
 }
 
