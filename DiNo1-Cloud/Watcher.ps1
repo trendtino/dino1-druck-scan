@@ -255,7 +255,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "Cloud 33"
+$script:WatcherVersion      = "Cloud 34"
 $script:WatcherVersionDatum = "16.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -850,7 +850,35 @@ function Get-OcrTextDatei($pdfName) {
 # Erste Seite einer PDF als Bild (fuer die Vorschau und - bei Ausdrucken -
 # fuer den Namensvorschlag). Rueckgabe: Bild (System.Drawing.Bitmap) und
 # Text, oder $null.
+# Der Dino1-Drucker schreibt grosse Drucke (viele Seiten) noch einige Sekunden -
+# vorher scheitert die Vorschau ("Wait ... Mindestens ein Fehler"). Daher warten,
+# bis die Datei frei ist und ihre Groesse sich nicht mehr aendert, und notfalls
+# ein zweites Mal versuchen.
+function Warte-DateiFertig([string]$pfad, [int]$maxSek = 20) {
+    $bis = (Get-Date).AddSeconds($maxSek); $alt = -1
+    while ((Get-Date) -lt $bis) {
+        try {
+            $len = (Get-Item -LiteralPath $pfad -ErrorAction Stop).Length
+            $s = [System.IO.File]::Open($pfad, 'Open', 'Read', 'None'); $s.Close()
+            if ($len -gt 0 -and $len -eq $alt) { return }
+            $alt = $len
+        } catch {}
+        [System.Windows.Forms.Application]::DoEvents()
+        Start-Sleep -Milliseconds 700
+    }
+}
 function Erzeuge-Vorschau($pdfPfad) {
+    if (-not $VorschauAktiv -and -not $OcrAktiv) { return $null }
+    try { Warte-DateiFertig $pdfPfad } catch {}
+    $r = Erzeuge-VorschauEinmal $pdfPfad
+    if ($r -and -not $r.Bild -and (Test-Path -LiteralPath $pdfPfad)) {
+        Start-Sleep -Seconds 2
+        $r2 = Erzeuge-VorschauEinmal $pdfPfad
+        if ($r2 -and $r2.Bild) { return $r2 }
+    }
+    return $r
+}
+function Erzeuge-VorschauEinmal($pdfPfad) {
     if (-not $VorschauAktiv -and -not $OcrAktiv) { return $null }
     $ergebnis = [PSCustomObject]@{ Bild = $null; Text = "" }
     $textDatei = Get-OcrTextDatei ([System.IO.Path]::GetFileName($pdfPfad))
