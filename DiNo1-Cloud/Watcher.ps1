@@ -255,7 +255,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "Cloud 37"
+$script:WatcherVersion      = "Cloud 38"
 $script:WatcherVersionDatum = "16.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -1578,6 +1578,12 @@ function Lese-LetztenScanner {
     return ""
 }
 
+$script:FesterScannerDatei = Join-Path $script:DatenOrdner "FesterScanner.txt"
+function Lese-FestenScanner {
+    try { if (Test-Path -LiteralPath $script:FesterScannerDatei) { return ([string](Get-Content -LiteralPath $script:FesterScannerDatei -Raw -ErrorAction Stop)).Trim() } } catch {}
+    return ""
+}
+
 function Speichere-LetztenScanner($anzeige) {
     try { Set-Content -Path $script:LetzterScannerDatei -Value $anzeige -Encoding UTF8 -Force } catch {}
 }
@@ -1651,6 +1657,8 @@ function Verbinde-Scanner($deviceId) {
 # KONFIGURATION. Ist von einem Scanner bekannt, dass er keinen Einzug bzw.
 # kein Duplex hat, ist die jeweilige Option ausgegraut.
 function Zeige-ScanOptionenDialog($scannerEintraege, $vorauswahlAnzeige) {
+    $fest = Lese-FestenScanner
+    if ($fest) { $vorauswahlAnzeige = $fest }
     $gemerkt = Lese-ScannerEinstellungen
     $dpiWerte  = @(150, 200, 300)
     $farbWerte = @("Farbe", "Graustufen", "Schwarzweiss")
@@ -1672,7 +1680,7 @@ function Zeige-ScanOptionenDialog($scannerEintraege, $vorauswahlAnzeige) {
 
     $cmbScanner = New-Object System.Windows.Forms.ComboBox
     $cmbScanner.Location = New-Object System.Drawing.Point(110, 15)
-    $cmbScanner.Width = 275
+    $cmbScanner.Width = 222
     $cmbScanner.DropDownStyle = "DropDownList"
     $startIndex = -1
     for ($i = 0; $i -lt $scannerEintraege.Count; $i++) {
@@ -1695,6 +1703,29 @@ function Zeige-ScanOptionenDialog($scannerEintraege, $vorauswahlAnzeige) {
     }
     if ($startIndex -lt 0) { $startIndex = 0 }
     $form.Controls.Add($cmbScanner)
+    # Haken "fest": dieser Scanner ist auf diesem PC immer gewaehlt (Liste gesperrt)
+    $chkFest = New-Object System.Windows.Forms.CheckBox
+    $chkFest.Text = "fest"
+    $chkFest.Location = New-Object System.Drawing.Point(340, 17)
+    $chkFest.AutoSize = $true
+    (New-Object System.Windows.Forms.ToolTip).SetToolTip($chkFest, "Diesen Scanner auf diesem PC fest einstellen. Haken entfernen, um einen anderen zu waehlen.")
+    $festGefunden = $false
+    if ($fest) { for ($i = 0; $i -lt $scannerEintraege.Count; $i++) { if ($scannerEintraege[$i].Gefunden -and $scannerEintraege[$i].Anzeige -eq $fest) { $festGefunden = $true } } }
+    $chkFest.Checked = $festGefunden
+    $cmbScanner.Enabled = -not $festGefunden
+    $chkFest.Add_CheckedChanged({
+        $cmbScanner.Enabled = -not $chkFest.Checked
+        try {
+            if ($chkFest.Checked -and $cmbScanner.SelectedIndex -ge 0) {
+                Set-Content -LiteralPath $script:FesterScannerDatei -Value ([string]$scannerEintraege[$cmbScanner.SelectedIndex].Anzeige) -Encoding UTF8 -Force
+                Schreibe-Log "Scanner fest eingestellt: $($scannerEintraege[$cmbScanner.SelectedIndex].Anzeige)"
+            } elseif (-not $chkFest.Checked) {
+                Remove-Item -LiteralPath $script:FesterScannerDatei -Force -ErrorAction SilentlyContinue
+                Schreibe-Log "Fester Scanner aufgehoben."
+            }
+        } catch {}
+    })
+    $form.Controls.Add($chkFest)
 
     $lblGeraet = New-Object System.Windows.Forms.Label
     $lblGeraet.Location = New-Object System.Drawing.Point(110, 42)
