@@ -255,7 +255,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "Cloud 38"
+$script:WatcherVersion      = "Cloud 39"
 $script:WatcherVersionDatum = "16.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -1462,19 +1462,31 @@ function Setze-WiaWertPassend($prop, $zielWert) {
 # ist und kleinere Dateien erzeugt.
 function Setze-WiaFarbmodus($item, $farbe) {
     switch ($farbe) {
-        "Graustufen"   { $datenTypWert = 1; $intentWert = 2 }
-        "Schwarzweiss" { $datenTypWert = 0; $intentWert = 4 }
-        default        { $datenTypWert = 2; $intentWert = 1 }
+        "Graustufen"   { $datenTypWert = 2; $intentWert = 2; $tiefe = 8 }
+        "Schwarzweiss" { $datenTypWert = 0; $intentWert = 4; $tiefe = 1 }
+        default        { $datenTypWert = 3; $intentWert = 1; $tiefe = 24 }
     }
-    try {
-        $datenTyp = Get-WiaEigenschaft $item.Properties $script:WIA_IPA_DATATYPE
-        if ($datenTyp) { $datenTyp.Value = $datenTypWert }
-    } catch {
-        Schreibe-Log "HINWEIS: Farbmodus '$farbe' wird vom Scanner evtl. nicht unterstuetzt: $($_.Exception.Message)"
-    }
+    # 1. Absicht (Intent) zuerst - viele Treiber setzen danach Datentyp/Tiefe selbst passend
     try {
         $intent = Get-WiaEigenschaft $item.Properties $script:WIA_IPS_CUR_INTENT
         if ($intent) { $intent.Value = $intentWert }
+    } catch {}
+    # 2. Datentyp (0 = Schwarzweiss, 2 = Graustufen, 3 = Farbe) ausdruecklich setzen
+    try {
+        $datenTyp = Get-WiaEigenschaft $item.Properties $script:WIA_IPA_DATATYPE
+        if ($datenTyp -and [int]$datenTyp.Value -ne $datenTypWert) { $datenTyp.Value = $datenTypWert }
+    } catch {
+        Schreibe-Log "HINWEIS: Farbmodus '$farbe' wird vom Scanner evtl. nicht unterstuetzt: $($_.Exception.Message)"
+    }
+    # 3. Bittiefe (1 / 8 / 24)
+    try {
+        $tp = Get-WiaEigenschaft $item.Properties 4104
+        if ($tp -and [int]$tp.Value -ne $tiefe) { $tp.Value = $tiefe }
+    } catch {}
+    try {
+        $ist = @()
+        foreach ($id in @($script:WIA_IPS_CUR_INTENT, $script:WIA_IPA_DATATYPE, 4104)) { $q = Get-WiaEigenschaft $item.Properties $id; $ist += $(if ($q) { [string]$q.Value } else { "-" }) }
+        Schreibe-Log "Farbmodus '$farbe' gesetzt: Absicht=$($ist[0]) Datentyp=$($ist[1]) Bittiefe=$($ist[2]) (erwartet: $intentWert / $datenTypWert / $tiefe)"
     } catch {}
 }
 
