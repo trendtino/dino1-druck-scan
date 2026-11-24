@@ -255,7 +255,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "Cloud 35"
+$script:WatcherVersion      = "Cloud 37"
 $script:WatcherVersionDatum = "16.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -2007,8 +2007,24 @@ function Hole-WiaBild($item, [bool]$folgeseite) {
             if ($hr -eq $script:WIA_ERROR_PAPER_EMPTY -or $_.Exception.Message -match "0x80210003") { throw }
             $istBesetzt = ($hr -eq $script:WIA_ERROR_BUSY -or $_.Exception.Message -match "0x80210006|ausgelastet|busy")
             if ($istBesetzt -and $folgeseite) {
-                Schreibe-Log "Scan-Abholung '$($v.Name)': Scanner meldet 'ausgelastet' nach der letzten Seite - Einzug gilt als leer."
-                throw
+                # Manche Scanner (z.B. Brother ueber WSD/Netzwerk) melden 'ausgelastet', waehrend sie das
+                # naechste Blatt noch einziehen - daher bis zu ca. 10 s weiter versuchen, erst dann gilt der Einzug als leer.
+                $wiederholung = $_
+                for ($w = 1; $w -le 5; $w++) {
+                    Start-Sleep -Seconds 2
+                    try {
+                        $bild = $item.Transfer($v.Format)
+                        if ($null -ne $bild) { Schreibe-Log "Scan-Abholung '$($v.Name)': naechste Seite nach $($w * 2) s Wartezeit erhalten."; return $bild }
+                    } catch {
+                        $wiederholung = $_
+                        $hr2 = $_.Exception.HResult
+                        if (-not $hr2 -and $_.Exception.InnerException) { $hr2 = $_.Exception.InnerException.HResult }
+                        if ($hr2 -eq $script:WIA_ERROR_PAPER_EMPTY -or $_.Exception.Message -match "0x80210003") { throw }
+                        if (-not ($hr2 -eq $script:WIA_ERROR_BUSY -or $_.Exception.Message -match "0x80210006|ausgelastet|busy")) { break }
+                    }
+                }
+                Schreibe-Log "Scan-Abholung '$($v.Name)': Scanner meldet nach der letzten Seite weiter 'ausgelastet' - Einzug gilt als leer."
+                throw $wiederholung
             }
             if ($istBesetzt) {
                 # Beim ersten Blatt: Scanner kurz in Ruhe lassen, dann einmal neu versuchen
@@ -2838,7 +2854,7 @@ function Verarbeite-Ablage {
             # Teile wie "Thomas Meier 1" erst in den Unterordner "Teile_warten":
             # Provitra holt sie dort nicht ab. Nach dem Zusammenfuegen (oder wenn
             # es nichts zum Zusammenfuegen gibt) kommen sie in den Ordner selbst.
-            if ($script:AutoZusammenfuegen -and $eingabe.Ziel -ne "Lokal" -and (Zerlege-TeilName $basisname)) {
+            if ($script:AutoZusammenfuegen -and $eingabe.Ziel -ne "Lokal" -and (Hat-ErstenTeil $zielOrdner $basisname)) {
                 $warteOrdner = Join-Path $zielOrdner $script:WarteOrdnerName
                 try {
                     if (-not (Test-Path $warteOrdner)) { New-Item -ItemType Directory -Path $warteOrdner -Force -ErrorAction Stop | Out-Null }
@@ -5408,6 +5424,21 @@ function Zerlege-TeilName($basisname) {
     $name = $m.Groups["name"].Value.Trim()
     if (-not $name) { return $null }
     return [PSCustomObject]@{ Datum = $m.Groups["datum"].Value; Name = $name; Nr = $nr; Schluessel = ($m.Groups["datum"].Value + $name).ToLowerInvariant() }
+}
+
+# Gehoert der Name zu einem mehrteiligen Dokument? Nur wenn er selbst Teil 1 ist
+# oder ein Teil 1 schon da ist - sonst ("Name 2" als Neudruck) normal ablegen.
+function Hat-ErstenTeil($ordner, $basisname) {
+    $t = Zerlege-TeilName $basisname
+    if (-not $t) { return $false }
+    if ($t.Nr -eq 1) { return $true }
+    foreach ($o in @($ordner, (Join-Path $ordner $script:WarteOrdnerName))) {
+        foreach ($f in @(Get-ChildItem -LiteralPath $o -Filter "*.pdf" -File -Force -ErrorAction SilentlyContinue)) {
+            $x = Zerlege-TeilName $f.BaseName
+            if ($x -and $x.Nr -eq 1 -and $x.Schluessel -eq $t.Schluessel) { return $true }
+        }
+    }
+    return $false
 }
 
 # Wo liegt eine Datei? -> Ziel (Mitarbeiter/Shop/Kasse/Lokal) + Mitarbeitername
