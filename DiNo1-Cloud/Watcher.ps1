@@ -255,8 +255,8 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "Cloud 40"
-$script:WatcherVersionDatum = "24.11.2026"
+$script:WatcherVersion      = "Cloud 41"
+$script:WatcherVersionDatum = "25.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
 # Bei einem automatischen Update bleibt der Abschnitt KONFIGURATION dieses
@@ -5921,6 +5921,21 @@ $script:WaOrdner      = Join-Path $env:LOCALAPPDATA "DiNo1-Cloud"
 $script:WaSkriptDatei = Join-Path $script:WaOrdner "WindowsApp-Aktualisieren.ps1"
 $script:WaAusDatei    = Join-Path $script:WaOrdner "WindowsApp_aus.txt"
 $script:WaStopDatei   = Join-Path $script:WaOrdner "WindowsApp_STOP.txt"
+# Standard = aus. Einmalige Umstellung: Wo die Aktualisierung schon erfolgreich laeuft
+# (Status "OK"), bleibt sie an; ueberall sonst (und bei neuen PCs) wird sie ausgeschaltet.
+try {
+    $waMarke = Join-Path $script:WaOrdner "WindowsApp_Standard_aus.txt"
+    if (-not $script:IndexModus -and -not (Test-Path -LiteralPath $waMarke)) {
+        New-Item -ItemType Directory -Force -Path $script:WaOrdner | Out-Null
+        $waSt = Join-Path $script:WaOrdner "WindowsApp_Status.txt"
+        $waLaeuft = $false
+        try { if (Test-Path -LiteralPath $waSt) { $waLaeuft = ([System.IO.File]::ReadAllText($waSt) -match '\|OK\s*$') } } catch {}
+        if (-not $waLaeuft -and -not (Test-Path -LiteralPath $script:WaAusDatei)) {
+            [System.IO.File]::WriteAllText($script:WaAusDatei, (Get-Date).ToString("yyyy-MM-dd HH:mm:ss"))
+        }
+        [System.IO.File]::WriteAllText($waMarke, (Get-Date).ToString("yyyy-MM-dd HH:mm:ss"))
+    }
+} catch {}
 $script:WaSkript = @'
 # WindowsApp-Aktualisieren (Version 04, 18.11.2026)
 # Drueckt in der Microsoft "Windows App" alle X Sekunden den Knopf
