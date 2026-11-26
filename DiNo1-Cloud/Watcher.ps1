@@ -255,7 +255,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "Cloud 49"
+$script:WatcherVersion      = "Cloud 50"
 $script:WatcherVersionDatum = "26.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -1183,8 +1183,8 @@ function Zeige-Erfassungsdialog($dateiname, $dateipfad, $vorschau) {
     $cmbShopOrd.MaxDropDownItems = 20
     $cmbShopOrd.DropDownStyle = "DropDownList"
     $cmbShopOrd.Visible = $false
-    [void]$cmbShopOrd.Items.Add("(Shop-Ordner selbst)")
-    foreach ($u in @(Hole-ShopUnterordner)) { [void]$cmbShopOrd.Items.Add($u) }
+    [void]$cmbShopOrd.Items.Add($script:ShopScanOrdnerName)
+    foreach ($u in @(Hole-ShopUnterordner)) { if ($u -ine $script:ShopScanOrdnerName) { [void]$cmbShopOrd.Items.Add($u) } }
     $cmbShopOrd.SelectedIndex = 0
     $form.Controls.Add($cmbShopOrd)
     $y += 35
@@ -1299,7 +1299,7 @@ function Zeige-Erfassungsdialog($dateiname, $dateipfad, $vorschau) {
         $zeigeMA = $radMitarbeiter.Checked
         $lblMA.Visible = $zeigeMA
         $cmbMA.Visible = $zeigeMA
-        $zeigeSO = ($radShop.Checked -and $cmbShopOrd.Items.Count -gt 1)
+        $zeigeSO = $radShop.Checked
         $lblShopOrd.Visible = $zeigeSO
         $cmbShopOrd.Visible = $zeigeSO
     }
@@ -1357,7 +1357,7 @@ function Zeige-Erfassungsdialog($dateiname, $dateipfad, $vorschau) {
         return [PSCustomObject]@{
             Ziel        = $ziel
             Mitarbeiter = $cmbMA.SelectedItem
-            ShopUnterordner = $(if ($ziel -eq "Shop" -and $cmbShopOrd.SelectedIndex -gt 0) { [string]$cmbShopOrd.SelectedItem } else { "" })
+            ShopUnterordner = $(if ($ziel -eq "Shop" -and $cmbShopOrd.SelectedIndex -ge 0) { [string]$cmbShopOrd.SelectedItem } else { $script:ShopScanOrdnerName })
             Kunde       = $bezeichnung
             Datum       = $dtpDatum.Value.ToString("yyyy-MM-dd")
         }
@@ -1563,6 +1563,7 @@ $script:LetzteScanDpiY = 0
 $script:DatenOrdner                = Split-Path $LogDatei -Parent
 $script:Dino1Dateiname             = "Dino1Drucker_Ausgabe.pdf"
 $script:Dino1Dateinamen            = @("Dino1Drucker_Ausgabe.pdf", "Cloud_Ausgabe.pdf")
+$script:ShopScanOrdnerName         = "Scans"
 $script:LetzterScannerDatei        = Join-Path $script:DatenOrdner "LetzterScanner.txt"
 $script:ScannerEinstellungenDatei  = Join-Path $script:DatenOrdner "ScannerEinstellungen.json"
 $script:BezeichnungenDatei         = Join-Path $script:DatenOrdner "Bezeichnungen.txt"
@@ -3088,6 +3089,9 @@ function Verarbeite-Ablage {
                     $zielOrdner = Ermittle-Zielordner $ShopOrdner "Shop"
                     if ($eingabe.ShopUnterordner -and $zielOrdner -eq $ShopOrdner) {
                         $unter = Join-Path $ShopOrdner $eingabe.ShopUnterordner
+                        if (-not [System.IO.Directory]::Exists($unter) -and $eingabe.ShopUnterordner -ieq $script:ShopScanOrdnerName) {
+                            try { [void][System.IO.Directory]::CreateDirectory($unter); Schreibe-Log "Ordner '$unter' angelegt." } catch {}
+                        }
                         if ([System.IO.Directory]::Exists($unter)) { $zielOrdner = $unter }
                         else { Schreibe-Log "HINWEIS: Unterordner '$($eingabe.ShopUnterordner)' gibt es nicht mehr - lege im Shop-Ordner ab." }
                     }
@@ -5232,7 +5236,7 @@ function Ermittle-VerschiebeZiel($art, $mitarbeiter, $datum) {
             if (-not $o) { throw "Fuer '$mitarbeiter' ist kein Ordner hinterlegt." }
             return (Join-Path $ZielBasis $o)
         }
-        "Shop"  { return $ShopOrdner }
+        "Shop"  { return (Join-Path $ShopOrdner $script:ShopScanOrdnerName) }
         "Kasse" {
             $d = Get-Date
             try { $d = [DateTime]::ParseExact([string]$datum, "yyyy-MM-dd", $null) } catch {}
