@@ -255,7 +255,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "Cloud 44"
+$script:WatcherVersion      = "Cloud 45"
 $script:WatcherVersionDatum = "26.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -951,7 +951,7 @@ function Erzeuge-Vorschau($pdfPfad) {
 }
 function Erzeuge-VorschauEinmal($pdfPfad) {
     if (-not $VorschauAktiv -and -not $OcrAktiv) { return $null }
-    $ergebnis = [PSCustomObject]@{ Bild = $null; Text = "" }
+    $ergebnis = [PSCustomObject]@{ Bild = $null; Text = ""; Ocr = $null }
     $textDatei = Get-OcrTextDatei ([System.IO.Path]::GetFileName($pdfPfad))
     if (Test-Path $textDatei) {
         try { $ergebnis.Text = [System.IO.File]::ReadAllText($textDatei) } catch {}
@@ -984,9 +984,13 @@ function Erzeuge-VorschauEinmal($pdfPfad) {
         $ergebnis.Bild = New-Object System.Drawing.Bitmap $tmp
         $tmp.Dispose(); $ms.Dispose()
 
-        if (-not $ergebnis.Text -and $OcrAktiv) {
+        if ($OcrAktiv) {
+            # immer erkennen: die Wortpositionen braucht die Namenserkennung (Vorname/Nachname)
             $erkannt = Erkenne-Text $png
-            if ($erkannt) { $ergebnis.Text = $erkannt.Text }
+            if ($erkannt) {
+                $ergebnis.Ocr = $erkannt
+                if (-not $ergebnis.Text) { $ergebnis.Text = $erkannt.Text }
+            }
         }
     } catch {
         Schreibe-Log "HINWEIS: Vorschau fuer '$([System.IO.Path]::GetFileName($pdfPfad))' nicht moeglich: $($_.Exception.Message)"
@@ -1002,6 +1006,73 @@ function Erzeuge-VorschauEinmal($pdfPfad) {
 
 # Sucht unter den schon einmal verwendeten Bezeichnungen die laengste, die im
 # erkannten Text vorkommt (z.B. ein Kundenname im Briefkopf).
+# Kundenname aus dem Formular: Wert rechts neben "Vorname" / "Nachname" (gleiche Zeile),
+# sonst "Kontoinhaber". Ergebnis "Vorname Nachname" oder "".
+function Finde-KundennameAusPdf($vorschau) {
+    if ($null -eq $vorschau) { return "" }
+    $stop = @('vorname', 'nachname', 'titel', 'firma', 'geburtsdatum', 'herr', 'frau', 'divers', 'personalausweis', 'reisepass', 'kontoinhaber', 'name', 'kunde', 'kundennummer')
+    $zeichen = [char[]]':*,;.'
+    $gueltig = {
+        param($t)
+        $t = "$t".Trim($zeichen)
+        return (($t -cmatch '^\p{Lu}[\p{L}''\-]{1,29}$') -and ($stop -notcontains $t.ToLowerInvariant()))
+    }
+    $ocr = $vorschau.Ocr
+    $nebenan = {
+        param($label, $max)
+        if ($null -eq $ocr -or $null -eq $ocr.Woerter) { return "" }
+        $anz = $ocr.Woerter.Count
+        for ($i = 0; $i -lt $anz; $i++) {
+            if ("$($ocr.Woerter[$i])".Trim($zeichen).ToLowerInvariant() -ne $label) { continue }
+            $x = [double]$ocr.X[$i]; $w = [double]$ocr.W[$i]; $h = [double]$ocr.H[$i]
+            if ($h -le 0) { continue }
+            $mitte = [double]$ocr.Y[$i] + $h / 2
+            $reihe = New-Object System.Collections.Generic.List[object]
+            for ($j = 0; $j -lt $anz; $j++) {
+                if ($j -eq $i) { continue }
+                if ([double]$ocr.X[$j] -le $x + $w) { continue }
+                if ([Math]::Abs(([double]$ocr.Y[$j] + [double]$ocr.H[$j] / 2) - $mitte) -ge $h * 0.7) { continue }
+                [void]$reihe.Add([pscustomobject]@{ X = [double]$ocr.X[$j]; W = [double]$ocr.W[$j]; T = [string]$ocr.Woerter[$j] })
+            }
+            $teile = New-Object System.Collections.Generic.List[string]
+            $ende = $x + $w
+            foreach ($r in @($reihe | Sort-Object X)) {
+                if ($teile.Count -gt 0 -and ($r.X - $ende) -gt $h * 3) { break }
+                if (-not (& $gueltig $r.T)) { break }
+                [void]$teile.Add($r.T.Trim($zeichen)); $ende = $r.X + $r.W
+                if ($teile.Count -ge $max) { break }
+            }
+            if ($teile.Count -gt 0) { return ($teile -join " ") }
+        }
+        return ""
+    }
+    $zeilenWert = {
+        param($label, $max)
+        $t = [string]$vorschau.Text
+        if (-not $t) { return "" }
+        foreach ($z in ($t -split "`r?`n")) {
+            $woerter = @($z.Trim() -split '\s+' | Where-Object { $_ })
+            if ($woerter.Count -lt 2 -or $woerter[0].Trim($zeichen).ToLowerInvariant() -ne $label) { continue }
+            $teile = New-Object System.Collections.Generic.List[string]
+            for ($k = 1; $k -lt $woerter.Count -and $teile.Count -lt $max; $k++) {
+                if (-not (& $gueltig $woerter[$k])) { break }
+                [void]$teile.Add($woerter[$k].Trim($zeichen))
+            }
+            if ($teile.Count -gt 0) { return ($teile -join " ") }
+        }
+        return ""
+    }
+    try {
+        $vor = & $nebenan 'vorname' 2; if (-not $vor) { $vor = & $zeilenWert 'vorname' 2 }
+        $nach = & $nebenan 'nachname' 3; if (-not $nach) { $nach = & $zeilenWert 'nachname' 3 }
+        if ($vor -and $nach) { return "$vor $nach" }
+        $konto = & $nebenan 'kontoinhaber' 4; if (-not $konto) { $konto = & $zeilenWert 'kontoinhaber' 4 }
+        if (@($konto -split ' ').Count -ge 2) { return $konto }
+        if ($nach) { return $nach }
+    } catch { Schreibe-Log "HINWEIS: Namenserkennung fehlgeschlagen: $($_.Exception.Message)" }
+    return ""
+}
+
 function Finde-Bezeichnungsvorschlag($text) {
     if ([string]::IsNullOrWhiteSpace($text)) { return "" }
     $norm = " " + (($text -replace '\s+', ' ').ToLowerInvariant()) + " "
@@ -1132,7 +1203,11 @@ function Zeige-Erfassungsdialog($dateiname, $dateipfad, $vorschau) {
     # Vorschlag aus der Texterkennung: ein schon bekannter Name, der im
     # Dokument vorkommt - markiert, damit Tippen ihn sofort ersetzt
     $vorschlag = ""
-    if ($null -ne $vorschau) { $vorschlag = Finde-Bezeichnungsvorschlag $vorschau.Text }
+    if ($null -ne $vorschau) {
+        $vorschlag = Finde-KundennameAusPdf $vorschau
+        if ($vorschlag) { Schreibe-Log "Kundenname aus dem Dokument: '$vorschlag'" }
+        else { $vorschlag = Finde-Bezeichnungsvorschlag $vorschau.Text }
+    }
     if ($vorschlag) {
         $txtKunde.Text = $vorschlag
         $txtKunde.BackColor = [System.Drawing.Color]::LightYellow
