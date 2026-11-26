@@ -255,7 +255,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "Cloud 51"
+$script:WatcherVersion      = "Cloud 52"
 $script:WatcherVersionDatum = "26.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -695,6 +695,7 @@ function Hole-ShopUnterordner {
             $n = [System.IO.Path]::GetFileName($k)
             if ($n -ieq "DiNo1-Druck-Scan" -or $n -ieq $script:WarteOrdnerName -or $n.StartsWith(".")) { continue }
             if ($kasse -and $k.TrimEnd([char]92) -ieq $kasse) { continue }
+            if ($tiefe -eq 1 -and $n -match '^(Kasse|Vertr)') { continue }   # bleiben unberuehrt
             try { if (([System.IO.File]::GetAttributes($k) -band [System.IO.FileAttributes]::Hidden) -ne 0) { continue } } catch {}
             [void]$liste.Add($k.Substring($basis.Length + 1))
             if ($tiefe -lt 3) { & $sammle $k ($tiefe + 1) }
