@@ -255,7 +255,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "Cloud 50"
+$script:WatcherVersion      = "Cloud 51"
 $script:WatcherVersionDatum = "26.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -665,13 +665,25 @@ function Get-EindeutigerZielpfadCloud($ordner, $basisname, $endung) {
     return $ziel
 }
 
+function Get-ShopBasis {
+    if ([string]::IsNullOrWhiteSpace($ShopOrdner)) { return $ShopOrdner }
+    $b = $ShopOrdner.Trim().TrimEnd([char]92)
+    if ([System.IO.Path]::GetFileName($b) -match '^\d{5,}$') { return $b }
+    try {
+        $nr = @([System.IO.Directory]::GetDirectories($b) | Where-Object { [System.IO.Path]::GetFileName($_) -match '^\d{5,}$' })
+        if ($nr.Count -eq 1) { return $nr[0].TrimEnd([char]92) }
+    } catch {}
+    return $b
+}
+
 # Unterordner des Shop-Ordners (relativ, bis 3 Ebenen) fuer die Auswahl beim Erfassen
 function Hole-ShopUnterordner {
     $liste = New-Object System.Collections.Generic.List[string]
     if ([string]::IsNullOrWhiteSpace($ShopOrdner)) { return ,@() }
-    $basis = $ShopOrdner.Trim().TrimEnd([char]92)
+    try { [void](Av-OrdnerAusCloud $ShopOrdner.Trim().TrimEnd([char]92)) } catch {}
+    $basis = Get-ShopBasis
     if (-not [System.IO.Directory]::Exists($basis)) { return ,@() }
-    try { [void](Av-OrdnerAusCloud $basis) } catch {}
+    if ($basis -ine $ShopOrdner.Trim().TrimEnd([char]92)) { try { [void](Av-OrdnerAusCloud $basis) } catch {} }
     $kasse = ""; try { if ($KassenOrdner -and $KassenOrdner.Trim() -ne "-") { $kasse = $KassenOrdner.Trim().TrimEnd([char]92) } } catch {}
     $sammle = $null
     $sammle = {
@@ -3088,7 +3100,7 @@ function Verarbeite-Ablage {
                 "Shop" {
                     $zielOrdner = Ermittle-Zielordner $ShopOrdner "Shop"
                     if ($eingabe.ShopUnterordner -and $zielOrdner -eq $ShopOrdner) {
-                        $unter = Join-Path $ShopOrdner $eingabe.ShopUnterordner
+                        $unter = Join-Path (Get-ShopBasis) $eingabe.ShopUnterordner
                         if (-not [System.IO.Directory]::Exists($unter) -and $eingabe.ShopUnterordner -ieq $script:ShopScanOrdnerName) {
                             try { [void][System.IO.Directory]::CreateDirectory($unter); Schreibe-Log "Ordner '$unter' angelegt." } catch {}
                         }
@@ -5236,7 +5248,7 @@ function Ermittle-VerschiebeZiel($art, $mitarbeiter, $datum) {
             if (-not $o) { throw "Fuer '$mitarbeiter' ist kein Ordner hinterlegt." }
             return (Join-Path $ZielBasis $o)
         }
-        "Shop"  { return (Join-Path $ShopOrdner $script:ShopScanOrdnerName) }
+        "Shop"  { return (Join-Path (Get-ShopBasis) $script:ShopScanOrdnerName) }
         "Kasse" {
             $d = Get-Date
             try { $d = [DateTime]::ParseExact([string]$datum, "yyyy-MM-dd", $null) } catch {}
