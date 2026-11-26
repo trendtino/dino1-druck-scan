@@ -255,7 +255,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "Cloud 48"
+$script:WatcherVersion      = "Cloud 49"
 $script:WatcherVersionDatum = "26.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -1562,6 +1562,7 @@ $script:LetzteScanDpiY = 0
 # Dateien fuer gemerkte Werte (liegen neben der Log-Datei)
 $script:DatenOrdner                = Split-Path $LogDatei -Parent
 $script:Dino1Dateiname             = "Dino1Drucker_Ausgabe.pdf"
+$script:Dino1Dateinamen            = @("Dino1Drucker_Ausgabe.pdf", "Cloud_Ausgabe.pdf")
 $script:LetzterScannerDatei        = Join-Path $script:DatenOrdner "LetzterScanner.txt"
 $script:ScannerEinstellungenDatei  = Join-Path $script:DatenOrdner "ScannerEinstellungen.json"
 $script:BezeichnungenDatei         = Join-Path $script:DatenOrdner "Bezeichnungen.txt"
@@ -2949,6 +2950,57 @@ function Schiebe-NichtUebertrageneNach {
     }
 }
 
+# Eigener Hintergrund-Thread: benennt die feste Druckausgabe alle 0,3 s um, sobald der Druck fertig ist.
+# Laeuft unabhaengig vom Erfassungsfenster, der Texterkennung usw.
+$script:DruckUmb = $null
+function Starte-DruckUmbenenner {
+    if ($script:DruckUmb -and $script:DruckUmb.Laeuft) { return }
+    if ($script:IndexModus -or -not $WatchFolder) { return }
+    try {
+        $sync = [hashtable]::Synchronized(@{ Laeuft = $true; Log = (New-Object 'System.Collections.Concurrent.ConcurrentQueue[string]') })
+        $script:DruckUmb = $sync
+        $ps = [powershell]::Create()
+        [void]$ps.AddScript({
+            param($ordner, $namen, $sync)
+            [System.Threading.Thread]::CurrentThread.IsBackground = $true
+            try {
+                while ($true) {
+                    foreach ($n in $namen) {
+                        $p = [System.IO.Path]::Combine($ordner, $n)
+                        if (-not [System.IO.File]::Exists($p)) { continue }
+                        try {
+                            $fs = [System.IO.File]::Open($p, 'Open', 'ReadWrite', 'None')
+                            $laenge = $fs.Length
+                            $fs.Close()
+                        } catch { continue }   # Drucker schreibt noch
+                        if ($laenge -le 0) { continue }
+                        $ziel = $null
+                        for ($i = 0; $i -lt 100; $i++) {
+                            $k = "Druck_" + [DateTime]::Now.ToString("yyyyMMdd_HHmmss_fff") + $(if ($i -gt 0) { "_$i" } else { "" }) + ".pdf"
+                            $ziel = [System.IO.Path]::Combine($ordner, $k)
+                            if (-not [System.IO.File]::Exists($ziel)) { break }
+                        }
+                        try {
+                            [System.IO.File]::Move($p, $ziel)
+                            $sync.Log.Enqueue("Dino1-Druck sofort umbenannt: $ziel")
+                        } catch { $sync.Log.Enqueue("HINWEIS: Druckausgabe konnte (noch) nicht umbenannt werden: $($_.Exception.Message)") }
+                    }
+                    Start-Sleep -Milliseconds 300
+                }
+            } finally { $sync.Laeuft = $false }
+        })
+        [void]$ps.AddArgument([string]$WatchFolder)
+        [void]$ps.AddArgument([string[]]$script:Dino1Dateinamen)
+        [void]$ps.AddArgument($sync)
+        [void]$ps.BeginInvoke()
+        $script:DruckUmbPs = $ps
+        Schreibe-Log "Druck-Umbenennung im Hintergrund gestartet ($($script:Dino1Dateinamen -join ', '))."
+    } catch {
+        $script:DruckUmb = $null
+        Schreibe-Log "HINWEIS: Druck-Umbenennung im Hintergrund nicht moeglich: $($_.Exception.Message)"
+    }
+}
+
 function Verarbeite-Ablage {
     $timer.Stop()
     try {
@@ -2962,18 +3014,23 @@ function Verarbeite-Ablage {
         # "Dino1 Drucker" schreibt immer in DIESELBE Datei. Deshalb wird sie
         # sofort nach dem Druck umbenannt - so kann ein weiterer Druck die
         # noch nicht erfasste Datei nicht mehr ueberschreiben.
-        $dino1Datei = Join-Path $WatchFolder $script:Dino1Dateiname
-        if ((Test-Path $dino1Datei) -and (Datei-IstFreigegeben $dino1Datei)) {
-            $neuerPfad = Get-EindeutigerZielpfad $WatchFolder ("Druck_" + (Get-Date -Format 'yyyyMMdd_HHmmss')) "pdf"
-            try {
-                Move-Item -Path $dino1Datei -Destination $neuerPfad -ErrorAction Stop
-                Schreibe-Log "Dino1-Druck umbenannt: $neuerPfad"
-            } catch {
-                Schreibe-Log "HINWEIS: Dino1-Druck konnte (noch) nicht umbenannt werden: $($_.Exception.Message)"
+        Starte-DruckUmbenenner
+        $meldung = $null
+        while ($script:DruckUmb -and $script:DruckUmb.Log.TryDequeue([ref]$meldung)) { Schreibe-Log $meldung }
+        foreach ($dn in $script:Dino1Dateinamen) {
+            $dino1Datei = Join-Path $WatchFolder $dn
+            if ((Test-Path -LiteralPath $dino1Datei) -and (Datei-IstFreigegeben $dino1Datei)) {
+                $neuerPfad = Get-EindeutigerZielpfad $WatchFolder ("Druck_" + (Get-Date -Format 'yyyyMMdd_HHmmss_fff')) "pdf"
+                try {
+                    Move-Item -LiteralPath $dino1Datei -Destination $neuerPfad -ErrorAction Stop
+                    Schreibe-Log "Dino1-Druck umbenannt: $neuerPfad"
+                } catch {
+                    Schreibe-Log "HINWEIS: Dino1-Druck konnte (noch) nicht umbenannt werden: $($_.Exception.Message)"
+                }
             }
         }
 
-        $pdfs = Get-ChildItem -Path $WatchFolder -Filter "*.pdf" -File -ErrorAction SilentlyContinue
+        $pdfs = @(Get-ChildItem -Path $WatchFolder -Filter "*.pdf" -File -ErrorAction SilentlyContinue | Where-Object { $script:Dino1Dateinamen -notcontains $_.Name })
 
         foreach ($datei in $pdfs) {
             $dateiSchluessel = Ermittle-DateiSchluessel $datei
