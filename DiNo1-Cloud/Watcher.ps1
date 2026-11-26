@@ -255,7 +255,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "Cloud 42"
+$script:WatcherVersion      = "Cloud 43"
 $script:WatcherVersionDatum = "26.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -660,6 +660,7 @@ function Hole-ShopUnterordner {
     if ([string]::IsNullOrWhiteSpace($ShopOrdner)) { return ,@() }
     $basis = $ShopOrdner.Trim().TrimEnd([char]92)
     if (-not [System.IO.Directory]::Exists($basis)) { return ,@() }
+    try { [void](Av-OrdnerAusCloud $basis) } catch {}
     $kasse = ""; try { if ($KassenOrdner -and $KassenOrdner.Trim() -ne "-") { $kasse = $KassenOrdner.Trim().TrimEnd([char]92) } } catch {}
     $sammle = $null
     $sammle = {
@@ -7302,9 +7303,12 @@ function Av-HoleDateien([string]$ordner) {
     }
     $script:AvCloudFehler = ""
     $log = Cloud-Logisch $ordner
+    $script:AvNeueOrdner = $false
     if ($log) {
         try {
-            foreach ($e in @(Get-HdListe -V (Cloud-Verbindung) -Pfad $log)) {
+            $hdListe = @(Get-HdListe -V (Cloud-Verbindung) -Pfad $log)
+            if (Av-OrdnerAusCloud $ordner $hdListe) { $script:AvNeueOrdner = $true }
+            foreach ($e in $hdListe) {
                 if ($e.IstOrdner -or (Av-IstHilfsdatei $e.Name)) { continue }
                 if ($namen.ContainsKey($e.Name.ToLowerInvariant())) { continue }
                 $lokal = Join-Path $ordner $e.Name
@@ -7328,6 +7332,50 @@ function Av-Anzeigename([string]$ordner) {
         if ($n -and ([string]$n.Tag) -ieq $ordner) { return ($n.FullPath -replace '\\', '  >  ') }
     } catch {}
     return [System.IO.Path]::GetFileName($ordner.TrimEnd('\'))
+}
+
+# Legt Unterordner, die es in HiDrive schon gibt, sofort im lokalen Geruest an
+# (sonst erst beim naechsten grossen Abgleich, bis zu 30 Min). Gibt $true zurueck, wenn neue dazukamen.
+function Av-OrdnerAusCloud([string]$ordner, $eintraege = $null) {
+    $neu = $false
+    if (-not $ordner -or $script:LokalModus) { return $false }
+    try {
+        if ($null -eq $eintraege) {
+            $log = Cloud-Logisch $ordner
+            if (-not $log) { return $false }
+            $eintraege = @(Get-HdListe -V (Cloud-Verbindung) -Pfad $log)
+        }
+        foreach ($e in @($eintraege)) {
+            if (-not $e.IstOrdner) { continue }
+            $n = [string]$e.Name
+            if (-not $n -or $n.StartsWith(".") -or $n -ieq $script:WarteOrdnerName) { continue }
+            $d = Join-Path $ordner $n
+            if (-not [System.IO.Directory]::Exists($d)) {
+                [void][System.IO.Directory]::CreateDirectory($d)
+                $neu = $true
+            }
+        }
+    } catch {}
+    return $neu
+}
+
+# Kinder eines Baumknotens neu einlesen (nach neu gefundenen Ordnern)
+function Av-ErneuereKnoten($n) {
+    if (-not $n -or -not $n.Tag) { return }
+    try {
+        if ($n.IsExpanded) {
+            $da = @{}
+            foreach ($k in $n.Nodes) { if ($k.Tag) { $da[([string]$k.Tag).ToLowerInvariant()] = $true } }
+            foreach ($d in @([System.IO.Directory]::GetDirectories([string]$n.Tag) | Sort-Object)) {
+                if ($da.ContainsKey($d.ToLowerInvariant())) { continue }
+                if ($script:AvStatusPfad -and $d.Equals($script:AvStatusPfad, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+                try { if (([System.IO.File]::GetAttributes($d) -band [System.IO.FileAttributes]::Hidden)) { continue } } catch {}
+                [void]$n.Nodes.Add((Av-NeuerKnoten ([System.IO.Path]::GetFileName($d)) $d))
+            }
+        } elseif ($n.Nodes.Count -eq 0 -and (Av-HatUnterordner ([string]$n.Tag))) {
+            $x = $n.Nodes.Add("..."); $x.Tag = $null
+        }
+    } catch {}
 }
 
 function Av-HatUnterordner([string]$pfad) {
@@ -8300,6 +8348,7 @@ function Zeige-DokumenteAnsehen {
         param($s, $e)
         $n = $e.Node
         if ($n.Nodes.Count -eq 1 -and $null -eq $n.Nodes[0].Tag -and $n.Tag) {
+            [void](Av-OrdnerAusCloud ([string]$n.Tag))
             $n.Nodes.Clear()
             try {
                 foreach ($d in @([System.IO.Directory]::GetDirectories([string]$n.Tag) | Sort-Object)) {
@@ -8327,6 +8376,7 @@ function Zeige-DokumenteAnsehen {
             if ($script:AvSuchbegriff) { $script:AvFilter.Text = "" }
             Av-LadeOrdner ([string]$e.Node.Tag)
             $script:AvFilterTimer.Stop()
+            if ($script:AvNeueOrdner) { Av-ErneuereKnoten $e.Node }
         } finally { $f.Cursor = [System.Windows.Forms.Cursors]::Default }
     })
 
