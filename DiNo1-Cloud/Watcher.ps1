@@ -255,8 +255,8 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "Cloud 41"
-$script:WatcherVersionDatum = "25.11.2026"
+$script:WatcherVersion      = "Cloud 42"
+$script:WatcherVersionDatum = "26.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
 # Bei einem automatischen Update bleibt der Abschnitt KONFIGURATION dieses
@@ -631,6 +631,73 @@ function Get-EindeutigerZielpfad($ordner, $basisname, $endung) {
         $zaehler++
     }
     return $ziel
+}
+
+# Wie Get-EindeutigerZielpfad, prueft aber zusaetzlich die Namen, die schon in
+# HiDrive liegen (lokal ist ja nur noch das Geruest) - so bekommt ein zweites
+# Dokument mit gleichem Namen sofort " (1)" und nichts wird ersetzt.
+function Get-EindeutigerZielpfadCloud($ordner, $basisname, $endung) {
+    $namen = @{}
+    try {
+        $log = $null
+        if (-not $script:LokalModus -and $script:CloudWurzel) { $log = Cloud-Logisch ([string]$ordner) }
+        if ($log) {
+            foreach ($e in @(Get-HdListe -V (Cloud-Verbindung) -Pfad $log)) { if (-not $e.IstOrdner) { $namen[$e.Name.ToLowerInvariant()] = $true } }
+        }
+    } catch { Schreibe-Log "HINWEIS: HiDrive-Namen fuer eindeutigen Dateinamen nicht lesbar ($($_.Exception.Message)) - pruefe nur lokal." }
+    $ziel = Join-Path $ordner "$basisname.$endung"
+    $zaehler = 1
+    while ((Test-Path -LiteralPath $ziel) -or $namen.ContainsKey([System.IO.Path]::GetFileName($ziel).ToLowerInvariant())) {
+        $ziel = Join-Path $ordner "$basisname ($zaehler).$endung"
+        $zaehler++
+    }
+    return $ziel
+}
+
+# Unterordner des Shop-Ordners (relativ, bis 3 Ebenen) fuer die Auswahl beim Erfassen
+function Hole-ShopUnterordner {
+    $liste = New-Object System.Collections.Generic.List[string]
+    if ([string]::IsNullOrWhiteSpace($ShopOrdner)) { return ,@() }
+    $basis = $ShopOrdner.Trim().TrimEnd([char]92)
+    if (-not [System.IO.Directory]::Exists($basis)) { return ,@() }
+    $kasse = ""; try { if ($KassenOrdner -and $KassenOrdner.Trim() -ne "-") { $kasse = $KassenOrdner.Trim().TrimEnd([char]92) } } catch {}
+    $sammle = $null
+    $sammle = {
+        param($dir, $tiefe)
+        if ($liste.Count -ge 400) { return }
+        $kinder = @()
+        try { $kinder = @([System.IO.Directory]::GetDirectories($dir) | Sort-Object) } catch { return }
+        foreach ($k in $kinder) {
+            $n = [System.IO.Path]::GetFileName($k)
+            if ($n -ieq "DiNo1-Druck-Scan" -or $n -ieq $script:WarteOrdnerName -or $n.StartsWith(".")) { continue }
+            if ($kasse -and $k.TrimEnd([char]92) -ieq $kasse) { continue }
+            try { if (([System.IO.File]::GetAttributes($k) -band [System.IO.FileAttributes]::Hidden) -ne 0) { continue } } catch {}
+            [void]$liste.Add($k.Substring($basis.Length + 1))
+            if ($tiefe -lt 3) { & $sammle $k ($tiefe + 1) }
+        }
+    }
+    & $sammle $basis 1
+    return ,$liste.ToArray()
+}
+
+# Shop-PCs: Dateien aus Mitarbeiter-Ordnern (und allem ausserhalb des Shop-Ordners)
+# duerfen nicht verschoben werden. Admin-PC und Lokal-Modus: keine Sperre.
+function Av-DarfVerschieben([string[]]$pfade) {
+    if ($script:IstAdminPc -or $script:LokalModus) { return $true }
+    $shop = ""; if ($ShopOrdner) { $shop = $ShopOrdner.Trim().TrimEnd([char]92).ToLowerInvariant() + [char]92 }
+    $lokal = ""; if ($LokalerOrdner) { $lokal = $LokalerOrdner.Trim().TrimEnd([char]92).ToLowerInvariant() + [char]92 }
+    $gesperrt = @()
+    foreach ($p in @($pfade)) {
+        if (-not $p) { continue }
+        $l = $p.ToLowerInvariant()
+        $ok = (($shop -and $l.StartsWith($shop)) -or ($lokal -and $l.StartsWith($lokal)))
+        if ($ok) { try { if ((Ermittle-AblageFuerPfad $p).Ziel -eq "Mitarbeiter") { $ok = $false } } catch {} }
+        if (-not $ok) { $gesperrt += [System.IO.Path]::GetFileName($p) }
+    }
+    if ($gesperrt.Count -eq 0) { return $true }
+    $namen = (@($gesperrt | Select-Object -First 6) -join "`n"); if ($gesperrt.Count -gt 6) { $namen += "`n..." }
+    [System.Windows.Forms.MessageBox]::Show("Dateien aus Mitarbeiter-Ordnern duerfen nicht verschoben werden. Verschieben geht nur mit Dateien aus dem Shop-Ordner.`n`n$namen", "Verschieben nicht erlaubt", "OK", "Information") | Out-Null
+    return $false
 }
 
 function Datei-IstFreigegeben($pfad) {
@@ -1018,6 +1085,25 @@ function Zeige-Erfassungsdialog($dateiname, $dateipfad, $vorschau) {
     foreach ($m in $MitarbeiterOrdner.Keys) { [void]$cmbMA.Items.Add($m) }
     $cmbMA.SelectedIndex = 0
     $form.Controls.Add($cmbMA)
+
+    # Shop-Ordner: Unterordner waehlen (gleiche Zeile wie Mitarbeiter, nur bei "Shop-Ordner")
+    $lblShopOrd = New-Object System.Windows.Forms.Label
+    $lblShopOrd.Text = "Ordner im Shop:"
+    $lblShopOrd.Location = New-Object System.Drawing.Point(15, $y)
+    $lblShopOrd.AutoSize = $true
+    $lblShopOrd.Visible = $false
+    $form.Controls.Add($lblShopOrd)
+    $cmbShopOrd = New-Object System.Windows.Forms.ComboBox
+    $cmbShopOrd.Location = New-Object System.Drawing.Point(200, ($y - 3))
+    $cmbShopOrd.Width = 230
+    $cmbShopOrd.DropDownWidth = 440
+    $cmbShopOrd.MaxDropDownItems = 20
+    $cmbShopOrd.DropDownStyle = "DropDownList"
+    $cmbShopOrd.Visible = $false
+    [void]$cmbShopOrd.Items.Add("(Shop-Ordner selbst)")
+    foreach ($u in @(Hole-ShopUnterordner)) { [void]$cmbShopOrd.Items.Add($u) }
+    $cmbShopOrd.SelectedIndex = 0
+    $form.Controls.Add($cmbShopOrd)
     $y += 35
 
     $lblKunde = New-Object System.Windows.Forms.Label
@@ -1126,6 +1212,9 @@ function Zeige-Erfassungsdialog($dateiname, $dateipfad, $vorschau) {
         $zeigeMA = $radMitarbeiter.Checked
         $lblMA.Visible = $zeigeMA
         $cmbMA.Visible = $zeigeMA
+        $zeigeSO = ($radShop.Checked -and $cmbShopOrd.Items.Count -gt 1)
+        $lblShopOrd.Visible = $zeigeSO
+        $cmbShopOrd.Visible = $zeigeSO
     }
     if ($script:LokalModus) {
         # Lokal: nur der eine Ablage-Ordner
@@ -1181,6 +1270,7 @@ function Zeige-Erfassungsdialog($dateiname, $dateipfad, $vorschau) {
         return [PSCustomObject]@{
             Ziel        = $ziel
             Mitarbeiter = $cmbMA.SelectedItem
+            ShopUnterordner = $(if ($ziel -eq "Shop" -and $cmbShopOrd.SelectedIndex -gt 0) { [string]$cmbShopOrd.SelectedItem } else { "" })
             Kunde       = $bezeichnung
             Datum       = $dtpDatum.Value.ToString("yyyy-MM-dd")
         }
@@ -2852,6 +2942,11 @@ function Verarbeite-Ablage {
                 }
                 "Shop" {
                     $zielOrdner = Ermittle-Zielordner $ShopOrdner "Shop"
+                    if ($eingabe.ShopUnterordner -and $zielOrdner -eq $ShopOrdner) {
+                        $unter = Join-Path $ShopOrdner $eingabe.ShopUnterordner
+                        if ([System.IO.Directory]::Exists($unter)) { $zielOrdner = $unter }
+                        else { Schreibe-Log "HINWEIS: Unterordner '$($eingabe.ShopUnterordner)' gibt es nicht mehr - lege im Shop-Ordner ab." }
+                    }
                 }
                 "Lokal" {
                     # Bewusst KEIN Ausweich-Ordner: liegt ohnehin auf diesem PC
@@ -2906,10 +3001,10 @@ function Verarbeite-Ablage {
                 } catch {}
             }
 
-            $zielpfad = Get-EindeutigerZielpfad $zielOrdner $basisname "pdf"
+            $zielpfad = Get-EindeutigerZielpfadCloud $zielOrdner $basisname "pdf"
 
             try {
-                Move-Item -Path $datei.FullName -Destination $zielpfad -Force
+                Move-Item -LiteralPath $datei.FullName -Destination $zielpfad -ErrorAction Stop
                 Schreibe-Log "Abgelegt ($($eingabe.Ziel)): $zielpfad"
                 Remove-Item -Path (Get-OcrTextDatei $datei.Name) -Force -ErrorAction SilentlyContinue
                 Merke-FuerSuche $eingabe $zielpfad $suchText
@@ -7635,6 +7730,7 @@ function Av-Verschiebe([string]$art, [string]$mitarbeiter) {
     if ($m.Count -ne 1) { return }
     $p = $m[0]
     if (-not (Av-NurPdf @($p) "Verschieben")) { return }
+    if (-not (Av-DarfVerschieben @($p))) { return }
     try {
         Cloud-ZumBearbeiten @($p)
         $datum = (Get-Item -LiteralPath $p).LastWriteTime.ToString("yyyy-MM-dd")
@@ -7888,6 +7984,7 @@ function Av-VerschiebeNach([string[]]$pfade, [string]$zielOrdner, [string]$zielN
     $zielOrdner = $zielOrdner.TrimEnd([char]92)
     $m = @($pfade | Where-Object { $_ -and ([System.IO.Path]::GetDirectoryName($_).TrimEnd([char]92) -ine $zielOrdner) })
     if ($m.Count -eq 0 -or $script:AvBeschaeftigt) { return }
+    if (-not (Av-DarfVerschieben $m)) { return }
     $namen = (@($m | Select-Object -First 6 | ForEach-Object { [System.IO.Path]::GetFileName($_) }) -join "`n")
     if ($m.Count -gt 6) { $namen += "`n..." }
     $a = [System.Windows.Forms.MessageBox]::Show("$($m.Count) Datei(en) nach $([char]0x201E)$zielName$([char]0x201C) verschieben?`n`n$namen", "Verschieben", "YesNo", "Question")
