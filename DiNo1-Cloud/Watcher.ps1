@@ -255,7 +255,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "Cloud 47"
+$script:WatcherVersion      = "Cloud 48"
 $script:WatcherVersionDatum = "26.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -644,6 +644,7 @@ function Get-EindeutigerZielpfadCloud($ordner, $basisname, $endung) {
     try {
         $log = $null
         if (-not $script:LokalModus -and $script:CloudWurzel) { $log = Cloud-Logisch ([string]$ordner) }
+        if ($log -and (($log -split '/') -contains $script:WarteOrdnerName)) { $log = $null }
         if ($log) {
             foreach ($e in @(Get-HdListe -V (Cloud-Verbindung) -Pfad $log)) {
                 if (-not $e.IstOrdner) { $namen[$e.Name.ToLowerInvariant()] = $true }
@@ -652,7 +653,9 @@ function Get-EindeutigerZielpfadCloud($ordner, $basisname, $endung) {
                 }
             }
         }
-    } catch { Schreibe-Log "HINWEIS: HiDrive-Namen fuer eindeutigen Dateinamen nicht lesbar ($($_.Exception.Message)) - pruefe nur lokal." }
+    } catch {
+        if ("$($_.Exception.Message)" -notmatch 'HTTP 404') { Schreibe-Log "HINWEIS: HiDrive-Namen fuer eindeutigen Dateinamen nicht lesbar ($($_.Exception.Message)) - pruefe nur lokal." }
+    }
     $ziel = Join-Path $ordner "$basisname.$endung"
     $zaehler = 1
     while ((Test-Path -LiteralPath $ziel) -or $namen.ContainsKey([System.IO.Path]::GetFileName($ziel).ToLowerInvariant())) {
