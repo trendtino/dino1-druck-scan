@@ -255,7 +255,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "Cloud 43"
+$script:WatcherVersion      = "Cloud 44"
 $script:WatcherVersionDatum = "26.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -624,6 +624,9 @@ function Sanitize-Dateiname($text) {
 }
 
 function Get-EindeutigerZielpfad($ordner, $basisname, $endung) {
+    if (-not $script:LokalModus -and $script:CloudWurzel -and (Get-Command Cloud-Logisch -ErrorAction SilentlyContinue) -and (Cloud-Logisch ([string]$ordner))) {
+        return (Get-EindeutigerZielpfadCloud $ordner $basisname $endung)
+    }
     $ziel = Join-Path $ordner "$basisname.$endung"
     $zaehler = 1
     while (Test-Path $ziel) {
@@ -5107,7 +5110,7 @@ function Verschiebe-Dokument($pfad, $zielOrdner, $neuerName, $ziel, $mitarbeiter
     if (-not $basis) { throw "Der Dateiname darf nicht leer sein." }
     $neu = Join-Path $zielOrdner "$basis.pdf"
     if ($neu -ine $pfad) {
-        if (Test-Path $neu) { $neu = Get-EindeutigerZielpfad $zielOrdner $basis "pdf" }
+        $neu = Get-EindeutigerZielpfad $zielOrdner $basis "pdf"
         Move-Item -Path $pfad -Destination $neu -ErrorAction Stop
     }
     $bez = $basis -replace '^\d{4}-\d{2}-\d{2}_', ''
