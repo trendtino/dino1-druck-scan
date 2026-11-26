@@ -255,7 +255,7 @@ function Schreibe-Log($text) {
 # Tray-Menue "Ueber", bei "Nach Updates suchen" und im Log angezeigt.
 # (Ein Update wird auch ohne Hochzaehlen erkannt; die Nummer dient nur der
 # Uebersicht, welcher PC welchen Stand hat.)
-$script:WatcherVersion      = "Cloud 46"
+$script:WatcherVersion      = "Cloud 47"
 $script:WatcherVersionDatum = "26.11.2026"
 
 # ======================= STANDARDWERTE FUER NEUERE EINSTELLUNGEN =======================
@@ -3008,7 +3008,7 @@ function Verarbeite-Ablage {
             Merke-Bezeichnung $eingabe.Kunde
 
             $kundeSauber = Sanitize-Dateiname $eingabe.Kunde
-            $basisname   = "$($eingabe.Datum)_$($kundeSauber)"
+            $basisname   = "$($eingabe.Datum)_$(Get-Date -Format 'HHmm')_$($kundeSauber)"
 
             # Hinweis: "continue" wirkt innerhalb von switch NICHT wie in einer
             # Schleife (PowerShell-Eigenheit) - deshalb hier ueber $zielOrdner
@@ -4281,7 +4281,7 @@ function Zeige-Suche {
     $aktualisiereZeile = {
         param($zeile, $neu, $ablage)
         $zeile.Cells["Datei"].Value = $neu
-        $zeile.Cells["Bezeichnung"].Value = ([System.IO.Path]::GetFileNameWithoutExtension($neu) -replace '^\d{4}-\d{2}-\d{2}_', '')
+        $zeile.Cells["Bezeichnung"].Value = ([System.IO.Path]::GetFileNameWithoutExtension($neu) -replace '^\d{4}-\d{2}-\d{2}_(\d{4}_)?', '')
         if ($ablage) { $zeile.Cells["Ablage"].Value = $ablage }
         $zeile.DefaultCellStyle.ForeColor = [System.Drawing.Color]::Empty
     }
@@ -4431,7 +4431,7 @@ function Zeige-Suche {
                 $u++
                 try {
                     $abl = Ermittle-AblageFuerPfad $umzug[1]
-                    Merke-Verschiebung $umzug[0] $umzug[1] $abl.Ziel $abl.Mitarbeiter ([System.IO.Path]::GetFileNameWithoutExtension($umzug[1]) -replace '^\d{4}-\d{2}-\d{2}_', '')
+                    Merke-Verschiebung $umzug[0] $umzug[1] $abl.Ziel $abl.Mitarbeiter ([System.IO.Path]::GetFileNameWithoutExtension($umzug[1]) -replace '^\d{4}-\d{2}-\d{2}_(\d{4}_)?', '')
                 } catch {}
             }
             try { if ($lauf.PS) { $lauf.PS.Dispose() } } catch {}
@@ -5160,7 +5160,7 @@ function Pruefe-ArchivPfad([string]$pfad) {
     $neu = Finde-ArchivPfad $pfad
     if (-not $neu) { return $pfad }
     $abl = Ermittle-AblageFuerPfad $neu
-    Merke-Verschiebung $pfad $neu $abl.Ziel $abl.Mitarbeiter ([System.IO.Path]::GetFileNameWithoutExtension($neu) -replace '^\d{4}-\d{2}-\d{2}_', '')
+    Merke-Verschiebung $pfad $neu $abl.Ziel $abl.Mitarbeiter ([System.IO.Path]::GetFileNameWithoutExtension($neu) -replace '^\d{4}-\d{2}-\d{2}_(\d{4}_)?', '')
     return $neu
 }
 
@@ -5193,7 +5193,7 @@ function Verschiebe-Dokument($pfad, $zielOrdner, $neuerName, $ziel, $mitarbeiter
         $neu = Get-EindeutigerZielpfad $zielOrdner $basis "pdf"
         Move-Item -Path $pfad -Destination $neu -ErrorAction Stop
     }
-    $bez = $basis -replace '^\d{4}-\d{2}-\d{2}_', ''
+    $bez = $basis -replace '^\d{4}-\d{2}-\d{2}_(\d{4}_)?', ''
     Merke-Verschiebung $pfad $neu $ziel $mitarbeiter $bez
     Schreibe-Log "Dokument verschoben/umbenannt: $pfad -> $neu"
     return $neu
@@ -5404,7 +5404,7 @@ function Fuehre-AltbestandIndexierungAus {
         $datum = ""
         try { $datum = [System.IO.File]::GetLastWriteTime($f).ToString("yyyy-MM-dd") } catch {}
         $name = [System.IO.Path]::GetFileNameWithoutExtension($f)
-        if ($name -match '^(\d{4}-\d{2}-\d{2})_(.*)$') { $datum = $matches[1]; $name = $matches[2] }
+        if ($name -match '^(\d{4}-\d{2}-\d{2})_(?:\d{4}_)?(.*)$') { $datum = $matches[1]; $name = $matches[2] }
         $eintrag = [ordered]@{
             Zeit = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'); Datum = $datum; Ziel = $e.Ziel
             Mitarbeiter = $e.Mitarbeiter; Bezeichnung = $name; Pfad = $f; PC = $env:COMPUTERNAME
@@ -5637,7 +5637,7 @@ $script:ZahlWoerter[("f" + [char]0x00FC + "nf")] = 5
 
 # Zerlegt "2026-11-12_Thomas Meier 2" in Schluessel (Datum+Name) und Nummer - oder $null
 function Zerlege-TeilName($basisname) {
-    $m = [regex]::Match($basisname, '^(?<datum>\d{4}-\d{2}-\d{2}_)?(?<name>.+?)[\s_\-]+(?:teil[\s_\-]*)?(?<nr>\d{1,2}|[a-z' + [char]0x00FC + ']+)$', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    $m = [regex]::Match($basisname, '^(?<datum>\d{4}-\d{2}-\d{2}_)?(?<zeit>\d{4}_)?(?<name>.+?)[\s_\-]+(?:teil[\s_\-]*)?(?<nr>\d{1,2}|[a-z' + [char]0x00FC + ']+)$', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
     if (-not $m.Success) { return $null }
     $nrText = $m.Groups["nr"].Value.ToLowerInvariant()
     $nr = 0
@@ -5645,7 +5645,8 @@ function Zerlege-TeilName($basisname) {
     if ($nr -lt 1) { return $null }
     $name = $m.Groups["name"].Value.Trim()
     if (-not $name) { return $null }
-    return [PSCustomObject]@{ Datum = $m.Groups["datum"].Value; Name = $name; Nr = $nr; Schluessel = ($m.Groups["datum"].Value + $name).ToLowerInvariant() }
+    # Datum = Datum + Uhrzeit (fuer den Namen des Ergebnisses), Schluessel ohne Uhrzeit: Teile von 10:22 und 10:25 gehoeren zusammen
+    return [PSCustomObject]@{ Datum = ($m.Groups["datum"].Value + $m.Groups["zeit"].Value); Name = $name; Nr = $nr; Schluessel = ($m.Groups["datum"].Value + $name).ToLowerInvariant() }
 }
 
 # Gehoert der Name zu einem mehrteiligen Dokument? Nur wenn er selbst Teil 1 ist
@@ -5714,7 +5715,7 @@ function Fuege-PdfsZusammen($dateien, $zielPfad, [bool]$einzelteileWegraeumen) {
                 $neu = Get-EindeutigerZielpfad $teileOrdner ([System.IO.Path]::GetFileNameWithoutExtension($d)) "pdf"
                 Move-Item -Path $d -Destination $neu -ErrorAction Stop
                 $abl = Ermittle-AblageFuerPfad $d
-                Merke-Verschiebung $d $neu $abl.Ziel $abl.Mitarbeiter ([System.IO.Path]::GetFileNameWithoutExtension($d) -replace '^\d{4}-\d{2}-\d{2}_', '')
+                Merke-Verschiebung $d $neu $abl.Ziel $abl.Mitarbeiter ([System.IO.Path]::GetFileNameWithoutExtension($d) -replace '^\d{4}-\d{2}-\d{2}_(\d{4}_)?', '')
             }
         }
         if (Test-Path $zielPfad) { Remove-Item -Path $zielPfad -Force -ErrorAction Stop }   # wird neu aufgebaut
@@ -5722,7 +5723,7 @@ function Fuege-PdfsZusammen($dateien, $zielPfad, [bool]$einzelteileWegraeumen) {
         catch { Copy-Item -Path $temp -Destination $zielPfad -Force -ErrorAction Stop; Remove-Item -Path $temp -Force -ErrorAction SilentlyContinue }
         $basis = [System.IO.Path]::GetFileNameWithoutExtension($zielPfad)
         $datum = if ($basis -match '^(\d{4}-\d{2}-\d{2})_') { $matches[1] } else { (Get-Date -Format 'yyyy-MM-dd') }
-        Merke-NeuesDokument $zielPfad $text $datum ($basis -replace '^\d{4}-\d{2}-\d{2}_', '')
+        Merke-NeuesDokument $zielPfad $text $datum ($basis -replace '^\d{4}-\d{2}-\d{2}_(\d{4}_)?', '')
         Schreibe-Log "PDFs zusammengefuegt ($(@($dateien).Count) Dateien, $($alleSeiten.Count) Seiten): $zielPfad"
         return $zielPfad
     } finally {
@@ -5787,7 +5788,7 @@ function Gib-WarteteileFrei($ordner, $schluessel) {
             $neu = Get-EindeutigerZielpfad $ordner $f.BaseName "pdf"
             Move-Item -LiteralPath $f.FullName -Destination $neu -ErrorAction Stop
             $abl = Ermittle-AblageFuerPfad $neu
-            Merke-Verschiebung $f.FullName $neu $abl.Ziel $abl.Mitarbeiter ($f.BaseName -replace '^\d{4}-\d{2}-\d{2}_', '')
+            Merke-Verschiebung $f.FullName $neu $abl.Ziel $abl.Mitarbeiter ($f.BaseName -replace '^\d{4}-\d{2}-\d{2}_(\d{4}_)?', '')
             Schreibe-Log "Teil ohne weitere Teile abgelegt: $neu"
         } catch {
             Schreibe-Log "FEHLER beim Ablegen von $($f.FullName): $($_.Exception.Message)"
@@ -5830,7 +5831,7 @@ function Pruefe-AutoZusammenfuegen {
             if ($jeNr.Count -lt 2 -or -not $jeNr.ContainsKey(1)) { continue }
             $sortiert = @($jeNr.Keys | Sort-Object | ForEach-Object { $jeNr[$_].Pfad })
             $erstes = $jeNr[1].Info
-            $ziel = Join-Path $c.Ordner ((Sanitize-Dateiname ($erstes.Datum + $erstes.Name)) + ".pdf")
+            $ziel = Get-EindeutigerZielpfad $c.Ordner (Sanitize-Dateiname ($erstes.Datum + $erstes.Name)) "pdf"
             Fuege-PdfsZusammen $sortiert $ziel $true | Out-Null
             $zusammengefuegt = $true
             $trayIcon.ShowBalloonTip(8000, "DiNo1 Cloud", "$($jeNr.Count) Teile zu '$([System.IO.Path]::GetFileName($ziel))' zusammengefuegt.", [System.Windows.Forms.ToolTipIcon]::Info)
@@ -7689,7 +7690,7 @@ function Bearbeite-PdfSeiten([string]$pfad, $drehungen, [int]$loeschSeite = -1) 
         $basis = [System.IO.Path]::GetFileNameWithoutExtension($pfad)
         $datum = (Get-Date -Format 'yyyy-MM-dd')
         if ($basis -match '^(\d{4}-\d{2}-\d{2})_') { $datum = $matches[1] }
-        Merke-NeuesDokument $pfad $text $datum ($basis -replace '^\d{4}-\d{2}-\d{2}_', '')
+        Merke-NeuesDokument $pfad $text $datum ($basis -replace '^\d{4}-\d{2}-\d{2}_(\d{4}_)?', '')
         Schreibe-Log "PDF bearbeitet (gedreht: $(if ($drehungen) { $drehungen.Count } else { 0 }) Seite(n), entfernt: $(if ($loeschSeite -ge 0) { $loeschSeite + 1 } else { '-' })): $pfad"
     } catch {
         Schreibe-FehlerLog "beim Bearbeiten von $pfad" $_
@@ -8082,7 +8083,7 @@ function Av-SucheTick {
             $u++
             try {
                 $abl = Ermittle-AblageFuerPfad $umzug[1]
-                Merke-Verschiebung $umzug[0] $umzug[1] $abl.Ziel $abl.Mitarbeiter ([System.IO.Path]::GetFileNameWithoutExtension($umzug[1]) -replace '^\d{4}-\d{2}-\d{2}_', '')
+                Merke-Verschiebung $umzug[0] $umzug[1] $abl.Ziel $abl.Mitarbeiter ([System.IO.Path]::GetFileNameWithoutExtension($umzug[1]) -replace '^\d{4}-\d{2}-\d{2}_(\d{4}_)?', '')
             } catch {}
         }
         try { $s.PS.Dispose() } catch {}
